@@ -1,0 +1,220 @@
+:root {
+  --bg: #050608;
+  --surface: rgba(255,255,255,.05);
+  --border: rgba(255,255,255,.08);
+  --text: #ffffff;
+  --muted: rgba(255,255,255,.6);
+
+  --accent1: #b48cff;
+  --accent2: #4fd1c5;
+
+  --radius: 28px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: "Inter", system-ui;
+  background: radial-gradient(circle at 20% 20%, #0c1020, #050608);
+  color: var(--text);
+  overflow-x: hidden;
+}
+
+/* ---------------- NAV ---------------- */
+
+.nav {
+  position: fixed;
+  inset: 0 0 auto 0;
+  padding: 32px 80px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  z-index: 20;
+  background: linear-gradient(#050608cc, transparent);
+}
+
+.logo {
+  font-weight: 800;
+  letter-spacing: .5px;
+}
+
+.nav nav a {
+  margin-left: 48px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 14px;
+  transition: .3s;
+}
+
+.nav nav a:hover {
+  color: white;
+}
+
+/* ---------------- HERO ---------------- */
+
+.hero {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  position: relative;
+  padding: 0 12%;
+}
+
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 30% 40%, #b48cff33, transparent 50%),
+    radial-gradient(circle at 70% 60%, #4fd1c533, transparent 50%);
+}
+
+.hero-content {
+  position: relative;
+  text-align: center;
+  max-width: 900px;
+}
+
+.hero h1 {
+  font-size: clamp(3.5rem, 7vw, 6rem);
+  line-height: 1;
+  background: linear-gradient(90deg, white, #b48cff);
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+.hero p {
+  margin-top: 32px;
+  font-size: 18px;
+  color: var(--muted);
+}
+
+.cta {
+  margin-top: 48px;
+  padding: 20px 44px;
+  border-radius: 100px;
+  background: linear-gradient(135deg, var(--accent1), var(--accent2));
+  border: none;
+  color: black;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 20px 60px #000;
+  transition: transform .3s;
+}
+
+.cta:hover {
+  transform: translateY(-3px);
+}
+
+/* ---------------- MISSION ---------------- */
+
+.mission {
+  padding: 200px 18%;
+  text-align: center;
+}
+
+.mission h2 {
+  font-size: 48px;
+  margin-bottom: 32px;
+}
+
+.mission p {
+  color: var(--muted);
+  font-size: 18px;
+}
+
+/* ---------------- PILLARS ---------------- */
+
+.pillars {
+  padding: 0 10% 160px;
+  display: grid;
+  grid-template-columns: repeat(3,1fr);
+  gap: 40px;
+}
+
+.pillar {
+  padding: 48px;
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, #ffffff08, #ffffff02);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+  transition: .4s;
+}
+
+.pillar:hover {
+  transform: translateY(-12px);
+  background: linear-gradient(180deg, #ffffff12, #ffffff05);
+}
+
+.pillar h3 {
+  font-size: 24px;
+  margin-bottom: 16px;
+}
+
+.pillar p {
+  color: var(--muted);
+}
+
+/* ---------------- HORIZONTAL ---------------- */
+
+.horizontal {
+  height: 100vh;
+}
+
+.panel {
+  min-width: 100vw;
+  display: grid;
+  place-items: center;
+  font-size: 64px;
+  font-weight: 800;
+  background: radial-gradient(circle, #111, #050608);
+}
+
+/* ---------------- JOIN ---------------- */
+
+.join {
+  padding: 200px 12%;
+  text-align: center;
+}
+
+.join h2 {
+  font-size: 56px;
+}
+
+.join p {
+  margin: 24px 0 40px;
+  color: var(--muted);
+}
+
+/* ---------------- FOOTER ---------------- */
+
+footer {
+  padding: 60px;
+  text-align: center;
+  color: var(--muted);
+}
+
+/* ---------------- RESPONSIVE ---------------- */
+
+@media (max-width: 900px) {
+
+  .pillars {
+    grid-template-columns: 1fr;
+  }
+
+  .nav {
+    padding: 24px;
+  }
+
+  .mission {
+    padding: 120px 8%;
+  }
+}

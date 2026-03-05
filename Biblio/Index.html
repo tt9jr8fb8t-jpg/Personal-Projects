@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Biblio</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="library-view" class="view active">
+    <header class="app-header">
+      <span class="logo">Biblio</span>
+      <div class="header-actions">
+        <div class="search-container">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="6.5" cy="6.5" r="4" stroke="currentColor" stroke-width="1.5"/><line x1="9.8" y1="9.8" x2="14" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <input type="text" id="library-search" placeholder="Search books...">
+        </div>
+        <button id="btn-add-book" class="btn primary">
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><line x1="6.5" y1="1" x2="6.5" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="1" y1="6.5" x2="12" y2="6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          Add Book
+        </button>
+        <button id="btn-settings" class="btn secondary">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="2" stroke="currentColor" stroke-width="1.5"/><path d="M7 1v1.5M7 11.5V13M1 7h1.5M11.5 7H13M2.5 2.5l1 1M10.5 10.5l1 1M11.5 2.5l-1 1M3.5 10.5l-1 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          Settings
+        </button>
+      </div>
+    </header>
+    <main class="library-main">
+      <div id="loading-state" class="hidden">Loading…</div>
+      <div id="library-content">
+        <div id="library-header-text" class="library-header-text hidden">
+          <h1>My Library</h1>
+          <span id="library-count"></span>
+        </div>
+        <div id="library-grid" class="library-grid">
+          <div id="add-book-card" class="add-book-card">
+            <div class="add-card-box">
+              <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+                <line x1="20" y1="6" x2="20" y2="34" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+                <line x1="6" y1="20" x2="34" y2="20" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+              </svg>
+              <div class="add-card-hover-text">
+                <div class="title">Add a Book</div>
+                <div class="sub">.txt · .md · .epub</div>
+              </div>
+            </div>
+            <div class="add-card-label">
+              <span class="title">Add Book</span>
+              <div class="sub">Click to upload</div>
+            </div>
+          </div>
+        </div>
+        <p id="empty-state" class="empty-state hidden">Your library is empty. Click <strong>Add Book</strong> to get started.<br/><span>Supports .txt · .md · .epub</span></p>
+      </div>
+    </main>
+  </div>
+
+  <div id="reader-view" class="view">
+    <header class="reader-header">
+      <button id="btn-exit-reader" class="btn-icon text-logo">Biblio</button>
+      
+      <div class="chapter-nav-wrapper">
+        <button id="btn-chapter-drop" class="btn-chapter">
+          <div class="title-row">
+            <span id="reader-book-title">Title</span>
+            <svg id="chapter-chev" width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <div id="reader-chapter-title" class="sub-row">Chapter</div>
+        </button>
+        <div id="chapter-dropdown" class="dropdown hidden">
+          <div class="dropdown-header">
+            <div id="drop-book-title" class="drop-title"></div>
+            <div id="drop-book-stats" class="drop-stats"></div>
+            <input type="text" id="chapter-search" placeholder="Search chapters..." class="chapter-search-input">
+          </div>
+          <div id="chapter-list"></div>
+        </div>
+      </div>
+
+      <div class="reader-actions">
+        <button id="btn-toggle-audio" class="btn outline hidden">▶ Play</button>
+        <button id="btn-upload-audio" class="btn outline">🎵 Audio</button>
+        <button id="btn-reader-settings" class="btn outline icon-only">⚙</button>
+      </div>
+    </header>
+
+    <div id="reader-settings-panel" class="settings-panel hidden">
+      </div>
+
+    <div id="tap-zone-prev" class="tap-zone left hidden"><div class="tap-icon"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M9 2L4 7l5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div></div>
+    <div id="tap-zone-next" class="tap-zone right hidden"><div class="tap-icon"><svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 2l5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div></div>
+
+    <main class="reader-main">
+      <div id="reader-card" class="reader-card">
+        </div>
+    </main>
+
+    <footer class="reader-footer">
+      <div class="footer-nav">
+        <button id="btn-prev-page" class="btn outline">← Prev</button>
+        <span id="page-indicator" class="page-indicator">Page 1</span>
+        <button id="btn-next-page" class="btn outline">Next →</button>
+      </div>
+      <div class="progress-track">
+        <div id="progress-bar" class="progress-bar"></div>
+      </div>
+    </footer>
+  </div>
+
+  <div id="settings-modal" class="modal-overlay hidden">
+    <div class="modal-content" id="settings-modal-content">
+      <div class="modal-header">
+        <h2>Settings</h2>
+        <button id="btn-close-settings" class="btn-close">×</button>
+      </div>
+      <div class="modal-tabs">
+        <button class="tab active" data-tab="theme">Appearance</button>
+        <button class="tab" data-tab="library">Library</button>
+      </div>
+      <div class="modal-body" id="modal-body">
+      </div>
+    </div>
+  </div>
+
+  <div id="upload-toast" class="toast hidden">
+    <div class="spinner" id="upload-spinner"></div>
+    <span id="upload-toast-text">Processing…</span>
+  </div>
+
+  <input type="file" id="file-input" accept=".txt,.md,.epub,.epub3" multiple class="hidden-input">
+  <input type="file" id="folder-input" webkitdirectory directory multiple class="hidden-input">
+  <input type="file" id="audio-input" accept="audio/*" class="hidden-input">
+  <input type="file" id="theme-input" accept=".json" class="hidden-input">
+  <input type="file" id="lib-import-input" accept=".json" class="hidden-input">
+  <audio id="audio-player" class="hidden-input"></audio>
+
+  <script src="script.js"></script>
+</body>
+</html>
