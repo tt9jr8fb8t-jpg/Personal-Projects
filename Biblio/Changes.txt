@@ -1,20 +1,22 @@
 Take these files:
-- Update the header of biblio to look more browser like with the book search bar in the middle where you can open the book or audiobook of choice directly from the search bar, kind of following the squarish design of the vs code search bar. 
-- Add books bar in the header should also just be a + sign directly adjacent to the the search bar with similar design to the safari new tab button but rounded square instead of circular. 
-- The settings should follow the same Idea as the books + isgn, just a cog wheel/gear in the top righthand side of the header. 
-- In the settings under the library tab allow for users to go to the Gutenberg project website to download new books. 
-- Make the folder connection button in the settings tab work and store the information about the folder to be referred to. 
-- Take the image from the ePub3 and ePub file to show as the book cover. 
-- Make it so that the window size of a page will never be big enough that the user has to scroll, as it should just fill the size of the window. 
-- Get rid of the add book button in the Library section and rename the library section to just say Library. 
-- Add a second tab in the Body section that says audiobooks for the audiobooks that the user adds.
-- In the two page view mode make it so that there is a line separating the two page views.
-- Get rid of weird text animation when two page mode is toggled
-- Get rid of Chaper formatting in the title chapter dropdown for non-chapter chapters, or whatever doesn't say chapter.
-- Change the audio button in the reader veiw to be an icon of headphones and play related audiobooks files.
-- In the three dots option allow the user to go to look up the book and the author.
-- Create two new settings under a new tab called accessibility that is called highlight words on hover and underline current line.
-   - When a word is hovered over by the mouse the word should be highlighted if highlight words on hover is enabled.
-   - When a word is hovered over, that line of text is  underlined to help readers focus on the line that they are reading.
-- In the Library body add a footer that shows 7 dots that fill up showing your current 7-day reading streak, where if a user has read more than 5 minutes a circle fills up.
-- Add a profile viewer that shows the user's current reading streak and how much they read per day in a stat layout much like github or monkeytype, show which books they read the most.
+Main page view: 
+- Center the reading streak in the middle of the page and make the text not bolded and the circles and text smaller so that it is less distracting. 
+- Make it so that the dots for the reader view fill from right to left not left to right.
+- Separate the Look up Author and Look up Book functions, and have them show the name of the author in a Look up {Author Name} format (ex. Look up Herman Melville) do the same for the book.
+Reader View:
+- When loading the book for the first time look for when words go off of the page and if there are any that do so make a new page. 
+- Stop limiting the pages to just one paragraph a page, it is okay if a paragraph has to split to cross two pages.
+- When a user clicks on a highlighted word bring up options to define or translate the word, which would then bring up a translation and definition from a dictionary and translating dictionary.
+Settings:
+- Make it so that the user can access their connected folder from the settings opening up the folder in their file explorer app. 
+- Change text that says connected folder to say connected folders.
+- Add a reload button with just an icon next to the connected folders text that allows Biblio to check the connected folders and automatically upload any new books detected on reload.
+  - Do this folder check every time that Biblio is opened and add books that weren't there before.
+- Switch the position of the add new book and connected folders button.
+- Fix the view grid of the last twelve weeks stats, show them to be more evenly spaced and not so far apart per week.
+Bugs and Issues:
+- Fix error in adding new books to biblio as it isn't letting me do so.
+
+
+Maybe add these options later:
+- Custom "Libraries" so that users can organize their books better either by genre or by tags or other custom options.
