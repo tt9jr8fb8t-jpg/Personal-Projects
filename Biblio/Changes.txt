@@ -1,7 +1,7 @@
 Take these files:
-- 
-- update the header of biblio to look more browser
-- like with the book search bar in the middle where you can open the book or audiobook of choice directly from the search bar. Add books bar in the header should also just be a + sign with similar design to the safari new tab button but rounded square instead of circular. The settings should follow the same Idea, just a cog wheel/gear in the top righthand side of the screen. 
+- Update the header of biblio to look more browser like with the book search bar in the middle where you can open the book or audiobook of choice directly from the search bar, kind of following the squarish design of the vs code search bar. 
+- Add books bar in the header should also just be a + sign directly adjacent to the the search bar with similar design to the safari new tab button but rounded square instead of circular. 
+- The settings should follow the same Idea as the books + isgn, just a cog wheel/gear in the top righthand side of the header. 
 - In the settings under the library tab allow for users to go to the Gutenberg project website to download new books. 
 - Make the folder connection button in the settings tab work and store the information about the folder to be referred to. 
 - Take the image from the ePub3 and ePub file to show as the book cover. 
@@ -9,4 +9,12 @@ Take these files:
 - Get rid of the add book button in the Library section and rename the library section to just say Library. 
 - Add a second tab in the Body section that says audiobooks for the audiobooks that the user adds.
 - In the two page view mode make it so that there is a line separating the two page views.
+- Get rid of weird text animation when two page mode is toggled
 - Get rid of Chaper formatting in the title chapter dropdown for non-chapter chapters, or whatever doesn't say chapter.
+- Change the audio button in the reader veiw to be an icon of headphones and play related audiobooks files.
+- In the three dots option allow the user to go to look up the book and the author.
+- Create two new settings under a new tab called accessibility that is called highlight words on hover and underline current line.
+   - When a word is hovered over by the mouse the word should be highlighted if highlight words on hover is enabled.
+   - When a word is hovered over, that line of text is  underlined to help readers focus on the line that they are reading.
+- In the Library body add a footer that shows 7 dots that fill up showing your current 7-day reading streak, where if a user has read more than 5 minutes a circle fills up.
+- Add a profile viewer that shows the user's current reading streak and how much they read per day in a stat layout much like github or monkeytype, show which books they read the most.
