@@ -428,8 +428,15 @@ button { font-family: inherit; }
   display: grid;
   grid-template-columns: 1fr 1px 1fr;
   gap: 0;
+  padding-left: 0;
+  padding-right: 0;
 }
-.reader-card.two-page > .reader-page { padding: 0 40px; overflow: hidden; height: 100%; }
+.reader-card.two-page > .reader-page {
+  padding: 44px 40px;
+  overflow: hidden;
+  height: 100%;
+  min-height: 0;
+}
 .reader-card.two-page > .page-divider {
   background: var(--borderSubtle);
   width: 1px;
@@ -600,20 +607,114 @@ button { font-family: inherit; }
 .note-item-delete { background: none; border: none; color: var(--textDim); cursor: pointer; font-size: 11px; padding: 0; }
 .note-item-delete:hover { color: #f85149; }
 
-/* Bookmark icon in reader */
+/* Bookmark icon in reader — sits in the left margin, no text displacement */
 .note-bookmark-icon {
+  position: absolute;
+  left: -22px;
+  top: 3px;
   display: inline-flex;
   align-items: flex-start;
-  margin-right: 4px;
-  vertical-align: top;
   cursor: default;
-  opacity: 0.85;
-  flex-shrink: 0;
-  position: relative;
-  top: 1px;
+  opacity: 0.8;
+  pointer-events: auto;
+  z-index: 2;
 }
 .note-bookmark-icon:hover { opacity: 1; }
 
-/* Note jump link */
-.note-item-jump { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 11px; padding: 0; }
-.note-item-jump:hover { text-decoration: underline; }
+/* Note jump link — styled as {pg#} badge */
+.note-item-jump {
+  background: rgba(56,139,253,0.12);
+  border: 1px solid rgba(56,139,253,0.3);
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: var(--font-ui);
+  letter-spacing: 0.02em;
+  transition: all 0.12s;
+}
+.note-item-jump:hover { background: rgba(56,139,253,0.22); border-color: var(--accent); }
+/* === AUDIO PANEL === */
+.audio-panel {
+  position: fixed; z-index: 650;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  width: 280px; overflow: hidden;
+  animation: toolbarPop 0.15s ease;
+}
+.audio-panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px 8px; border-bottom: 1px solid var(--borderSubtle);
+}
+.audio-panel-title {
+  font-size: 12px; font-weight: 700; color: var(--text);
+  display: flex; align-items: center; gap: 5px;
+}
+.audio-panel-close {
+  background: none; border: none; color: var(--textDim);
+  cursor: pointer; font-size: 18px; line-height: 1; padding: 0;
+}
+.audio-panel-body { padding: 14px 16px 16px; }
+.audio-no-file {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 8px 0 4px; text-align: center;
+}
+.audio-progress-row {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+}
+.audio-time-cur, .audio-time-dur {
+  font-size: 10px; color: var(--textDim); flex-shrink: 0; font-variant-numeric: tabular-nums;
+  min-width: 32px;
+}
+.audio-time-dur { text-align: right; }
+.audio-progress-track {
+  flex: 1; height: 4px; background: var(--progressTrack);
+  border-radius: 2px; position: relative; overflow: visible; cursor: pointer;
+}
+.audio-progress-fill {
+  height: 100%; background: linear-gradient(90deg, var(--accent), var(--accentSecondary));
+  border-radius: 2px; pointer-events: none; transition: width 0.1s;
+}
+.audio-controls-row {
+  display: flex; align-items: center; justify-content: center; gap: 16px;
+}
+.audio-ctrl-btn {
+  background: none; border: 1px solid var(--border); color: var(--textMuted);
+  border-radius: 50%; width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all 0.15s;
+}
+.audio-ctrl-btn:hover { background: var(--surfaceAlt); color: var(--text); border-color: var(--accent); }
+.audio-play-btn { width: 42px; height: 42px; border-color: var(--accent); color: var(--accent); }
+.audio-play-btn:hover { background: rgba(56,139,253,0.14); }
+
+/* Reader text highlight */
+.reader-highlight {
+  background: rgba(255, 220, 60, 0.28);
+  border-radius: 2px;
+  color: inherit;
+}
+
+/* Note jump persistent highlight */
+mark.reader-note-highlight {
+  background: rgba(56, 139, 253, 0.32);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+  animation: noteHighlightPulse 0.4s ease;
+}
+@keyframes noteHighlightPulse {
+  0% { background: rgba(56,139,253,0.65); }
+  100% { background: rgba(56,139,253,0.32); }
+}
+
+/* Page indicator inline input — hide spinner arrows */
+#page-indicator input[type=number]::-webkit-inner-spin-button,
+#page-indicator input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+#page-indicator input[type=number] { -moz-appearance: textfield; }
+
+/* Chapter page-jump item special style */
+.chapter-item-page-jump { background: rgba(56,139,253,0.04); }
+.chapter-item-page-jump:hover { background: rgba(56,139,253,0.1); }

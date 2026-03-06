@@ -1,7 +1,7 @@
 // ============================================================================
 // STORAGE POLYFILL & CONSTANTS
 // ============================================================================
-const DB_NAME = "BiblioDB";
+const DB_NAME = "GnosDB";
 const STORE_NAME = "keyval";
 
 const initDB = () => new Promise((resolve, reject) => {
@@ -110,6 +110,11 @@ const state = {
 // ============================================================================
 // UTILITIES & PARSING
 // ============================================================================
+// Returns the Ollama URL, defaulting to localhost:11434 if not set
+function getOllamaUrl() {
+  return (state.ollamaUrl || "http://localhost:11434").replace(/\/$/, "");
+}
+
 const readFileAsText = (file) => new Promise((res, rej) => {
   const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsText(file);
 });
@@ -168,156 +173,259 @@ function countWords(str) {
 }
 
 // ============================================================================
-// PIXEL-ACCURATE PAGE LAYOUT (like Apple Books / Kindle)
+// DYNAMIC REFLOW PAGINATION ENGINE
+// Uses CSS column-based layout with DOM overflow detection for true reflow.
+// Pages are virtual: we store all blocks as one HTML string and use a
+// hidden column-flow container to detect page breaks at runtime.
 // ============================================================================
-let _measureEl = null;
 
-function ensureMeasureEl() {
-  if (_measureEl && document.body.contains(_measureEl)) return _measureEl;
-  _measureEl = document.createElement("div");
-  _measureEl.setAttribute("aria-hidden", "true");
-  _measureEl.style.cssText = "position:fixed;visibility:hidden;pointer-events:none;top:-9999px;left:0;z-index:-1;overflow:hidden;";
-  document.body.appendChild(_measureEl);
-  return _measureEl;
+// Convert blocks array → clean HTML string for reflow
+function blocksToHTML(blocks) {
+  return blocks.map(b => {
+    if (!b?.text?.trim()) return "";
+    if (b.type === "heading") return `<h2 class="rf-h2">${b.text}</h2>`;
+    if (b.type === "subheading") return `<h3 class="rf-h3">${b.text}</h3>`;
+    return `<p class="rf-p">${b.text}</p>`;
+  }).join("");
 }
 
-function getPageDimensions() {
-  const cardPadH = 88, cardPadW = 112, headerH = 52, footerH = 64, outerPadH = 28, outerPadW = 48;
+// Get exact pixel dimensions of the reader card at current viewport/settings
+function getCardDimensions() {
+  const headerH = 52, footerH = 64, outerPadV = 28, cardPadV = 88, cardPadH = 112;
+  const outerPadH = 48;
   const maxCardW = state.twoPage ? 1280 : 680;
   const viewW = window.innerWidth || 1024;
   const viewH = window.innerHeight || 768;
-  const cardW = Math.min(viewW - outerPadW, maxCardW);
-  const colW = state.twoPage ? cardW / 2 - cardPadW - 40 : cardW - cardPadW;
-  const pageH = viewH - headerH - footerH - outerPadH - cardPadH;
-  return { colW: Math.max(180, colW), pageH: Math.max(180, pageH) };
+  const cardW = Math.min(viewW - outerPadH, maxCardW);
+  const cardH = viewH - headerH - footerH - outerPadV;
+  // For two-page: each column has its own padding
+  const colW = state.twoPage ? (cardW - cardPadH) / 2 - 20 : cardW - cardPadH;
+  const colH = cardH - cardPadV;
+  return { cardW: Math.max(300, cardW), cardH: Math.max(200, cardH), colW: Math.max(160, colW), colH: Math.max(160, colH) };
 }
 
-function measureBlockH(text, type) {
-  const mel = ensureMeasureEl();
-  const { colW } = getPageDimensions();
-  mel.style.width = `${colW}px`;
-  mel.style.fontFamily = state.fontFamily;
-  const el = document.createElement("p");
-  if (type === "heading") {
-    el.style.cssText = `margin:0;font-size:${Math.round(state.fontSize*1.4)}px;font-weight:700;line-height:1.25;word-break:break-word;`;
-  } else if (type === "subheading") {
-    el.style.cssText = `margin:0;font-size:${Math.round(state.fontSize*1.15)}px;font-weight:600;line-height:1.35;word-break:break-word;`;
-  } else {
-    el.style.cssText = `margin:0;font-size:${state.fontSize}px;line-height:${state.lineSpacing};text-align:justify;word-break:break-word;hyphens:auto;`;
-  }
-  el.textContent = text;
-  mel.innerHTML = "";
-  mel.appendChild(el);
-  const h = el.getBoundingClientRect().height;
-  return h > 0 ? Math.ceil(h) : null; // return null if measurement failed
-}
-
-// Estimate words per page using simple geometry (used as fallback)
-function estimateWordsPerPage() {
-  const { colW, pageH } = getPageDimensions();
-  const charW = state.fontSize * 0.52;
-  const lineH = state.fontSize * state.lineSpacing;
-  const charsPerLine = Math.max(1, Math.floor(colW / charW));
-  const linesPerPage = Math.max(1, Math.floor(pageH / lineH));
-  return Math.max(80, Math.floor((charsPerLine / 5.5) * linesPerPage * 0.88));
-}
-
+// Reflow-based page splitter: renders all content into a hidden multi-column
+// container and detects which blocks belong on each page by measuring offsets.
 function splitBlocksIntoPages(blocks) {
-  // Try pixel-accurate layout first; fall back to word-count if measurements fail
-  const { pageH } = getPageDimensions();
-  const safeH = Math.floor(pageH * 0.97);
-  const PARA_GAP = Math.round(state.fontSize * 0.45);
-  const minLineH = Math.ceil(state.fontSize * state.lineSpacing);
+  if (!blocks || blocks.length === 0) return [[{ type: "para", text: "" }]];
 
-  // Quick measurement test to see if DOM measurement is available
-  const testH = measureBlockH("test word", "para");
-  const canMeasure = testH !== null && testH > 0;
+  const { colW, colH } = getCardDimensions();
 
-  if (!canMeasure) {
-    // Fallback: word-count based splitting
-    const wpp = estimateWordsPerPage();
-    const pages = []; let cur = [], curWords = 0, isChap = false;
-    const flush = () => { if (cur.length) { pages.push(cur); cur = []; curWords = 0; isChap = false; } };
-    for (const block of blocks) {
-      if (block.type === "heading") { flush(); cur.push(block); isChap = true; continue; }
-      if (block.type === "subheading") { if (isChap && curWords === 0) cur.push(block); else { flush(); cur.push(block); isChap = true; } continue; }
-      if (isChap) flush();
-      const words = block.text.split(/\s+/).filter(Boolean);
-      let wi = 0;
-      while (wi < words.length) {
-        const take = Math.min(wpp - curWords, words.length - wi);
-        if (take <= 0) { flush(); continue; }
-        cur.push({ type: "para", text: words.slice(wi, wi + take).join(" ") });
-        curWords += take; wi += take;
-        if (curWords >= wpp) flush();
-      }
+  // Create a hidden off-screen measurement container
+  const host = document.createElement("div");
+  host.setAttribute("aria-hidden", "true");
+  host.style.cssText = [
+    "position:fixed", "top:-99999px", "left:0",
+    `width:${colW}px`,
+    "overflow:hidden",
+    "visibility:hidden",
+    "pointer-events:none",
+    "z-index:-1",
+    `font-family:${state.fontFamily}`,
+    `font-size:${state.fontSize}px`,
+    `line-height:${state.lineSpacing}`,
+  ].join(";");
+  document.body.appendChild(host);
+
+  // Inject styles for block types
+  const styleEl = document.createElement("style");
+  styleEl.textContent = `
+    .rf-p { margin:0 0 ${Math.round(state.fontSize * 0.55)}px 0; text-align:justify; word-break:break-word; hyphens:auto; font-size:${state.fontSize}px; line-height:${state.lineSpacing}; }
+    .rf-p + .rf-p { text-indent:2em; margin-bottom:0; }
+    .rf-h2 { margin:0 0 ${Math.round(state.fontSize * 0.7)}px 0; font-size:${Math.round(state.fontSize * 1.65)}px; font-weight:700; line-height:1.2; break-after:avoid; word-break:break-word; }
+    .rf-h3 { margin:0 0 ${Math.round(state.fontSize * 0.5)}px 0; font-size:${Math.round(state.fontSize * 1.18)}px; font-weight:600; line-height:1.3; break-after:avoid; opacity:0.8; word-break:break-word; }
+  `;
+  host.appendChild(styleEl);
+
+  // Render each block as a tagged element with an index
+  const wrapper = document.createElement("div");
+  wrapper.style.cssText = "width:100%;";
+  
+  const elements = [];
+  blocks.forEach((b, i) => {
+    if (!b?.text?.trim()) return;
+    let el;
+    if (b.type === "heading") {
+      el = document.createElement("h2");
+      el.className = "rf-h2";
+    } else if (b.type === "subheading") {
+      el = document.createElement("h3");
+      el.className = "rf-h3";
+    } else {
+      el = document.createElement("p");
+      el.className = "rf-p";
     }
-    flush();
-    return pages.length > 0 ? pages : [[{ type: "para", text: "" }]];
-  }
+    el.textContent = b.text;
+    el.dataset.blockIdx = i;
+    wrapper.appendChild(el);
+    elements.push({ el, block: b, idx: i });
+  });
+  host.appendChild(wrapper);
 
-  // Pixel-accurate splitting via DOM measurement
+  // Force layout
+  void host.offsetHeight;
+
+  // Now split into pages by cumulative height
   const pages = [];
-  let cur = [], curH = 0, isChapterPage = false;
+  let curPageBlocks = [];
+  let curH = 0;
+  const safeH = Math.floor(colH * 0.98);
+  const GAP = Math.round(state.fontSize * 0.55);
 
-  const flush = () => {
-    if (cur.length > 0) { pages.push(cur); cur = []; curH = 0; isChapterPage = false; }
-  };
+  // Chapter heading: always starts a new page
+  let isChapterPage = false;
 
-  for (const block of blocks) {
+  for (let i = 0; i < elements.length; i++) {
+    const { el, block } = elements[i];
+    const elH = Math.ceil(el.getBoundingClientRect().height);
+
+    // Heading = chapter start: flush to new page
     if (block.type === "heading") {
-      flush(); cur.push(block); isChapterPage = true; continue;
-    }
-    if (block.type === "subheading") {
-      if (isChapterPage && curH === 0) { cur.push(block); }
-      else { flush(); cur.push(block); isChapterPage = true; }
+      if (curPageBlocks.length > 0) {
+        pages.push(curPageBlocks);
+        curPageBlocks = [];
+        curH = 0;
+      }
+      curPageBlocks.push(block);
+      isChapterPage = true;
+      // Don't count height here; chapter pages get flushed when body text starts
       continue;
     }
-    if (isChapterPage) flush();
 
-    const words = block.text.split(/\s+/).filter(Boolean);
-    let wi = 0;
-    let safetyLimit = words.length * 3; // prevent any possible infinite loop
-
-    while (wi < words.length && safetyLimit-- > 0) {
-      const gap = cur.length > 0 ? PARA_GAP : 0;
-      const available = safeH - curH - gap;
-
-      if (available < minLineH) {
-        if (cur.length > 0) { flush(); continue; }
-        // Even on empty page there's no space — just push one word and move on
-        cur.push({ type: "para", text: words[wi] });
-        curH += minLineH;
-        wi++;
-        flush();
+    if (block.type === "subheading") {
+      if (isChapterPage && curPageBlocks.length > 0) {
+        curPageBlocks.push(block);
         continue;
       }
-
-      // Binary search for max words fitting in available height
-      let lo = 1, hi = words.length - wi, best = 0;
-      while (lo <= hi) {
-        const mid = Math.floor((lo + hi) / 2);
-        const h = measureBlockH(words.slice(wi, wi + mid).join(" "), "para") ?? (mid * minLineH / 5);
-        if (h <= available) { best = mid; lo = mid + 1; }
-        else { hi = mid - 1; }
+      if (curPageBlocks.length > 0) {
+        pages.push(curPageBlocks);
+        curPageBlocks = [];
+        curH = 0;
       }
+      curPageBlocks.push(block);
+      isChapterPage = true;
+      continue;
+    }
 
-      if (best === 0) {
-        if (cur.length > 0) { flush(); continue; }
-        best = 1; // force at least 1 word
+    // Regular paragraph — flush chapter heading page first
+    if (isChapterPage) {
+      pages.push(curPageBlocks);
+      curPageBlocks = [];
+      curH = 0;
+      isChapterPage = false;
+    }
+
+    // If paragraph fits on current page
+    const gapBefore = curPageBlocks.length > 0 ? GAP : 0;
+    if (curH + gapBefore + elH <= safeH) {
+      curPageBlocks.push(block);
+      curH += gapBefore + elH;
+    } else {
+      // Paragraph doesn't fit — need to split it word by word
+      if (curPageBlocks.length > 0) {
+        // Try to fit as many words as possible on current page
+        const words = block.text.split(/\s+/).filter(Boolean);
+        const testEl = document.createElement("p");
+        testEl.className = "rf-p";
+        testEl.style.cssText = `width:${colW}px; position:fixed; top:-99999px; visibility:hidden; pointer-events:none;`;
+        document.body.appendChild(testEl);
+
+        const gap = curPageBlocks.length > 0 ? GAP : 0;
+        const available = safeH - curH - gap;
+        
+        // Binary search for how many words fit
+        let lo = 0, hi = words.length - 1, bestFit = 0;
+        while (lo <= hi) {
+          const mid = Math.ceil((lo + hi) / 2);
+          testEl.textContent = words.slice(0, mid).join(" ");
+          const h = testEl.getBoundingClientRect().height;
+          if (h <= available && mid > 0) { bestFit = mid; lo = mid + 1; }
+          else { hi = mid - 1; }
+        }
+        document.body.removeChild(testEl);
+
+        if (bestFit > 0) {
+          curPageBlocks.push({ type: "para", text: words.slice(0, bestFit).join(" ") });
+          pages.push(curPageBlocks);
+          // Remaining words go to next page(s)
+          let remainWords = words.slice(bestFit);
+          while (remainWords.length > 0) {
+            curPageBlocks = [];
+            curH = 0;
+            const testEl2 = document.createElement("p");
+            testEl2.className = "rf-p";
+            testEl2.style.cssText = `width:${colW}px; position:fixed; top:-99999px; visibility:hidden; pointer-events:none;`;
+            document.body.appendChild(testEl2);
+            let bf2 = 0, lo2 = 1, hi2 = remainWords.length;
+            while (lo2 <= hi2) {
+              const mid2 = Math.ceil((lo2 + hi2) / 2);
+              testEl2.textContent = remainWords.slice(0, mid2).join(" ");
+              const h2 = testEl2.getBoundingClientRect().height;
+              if (h2 <= safeH) { bf2 = mid2; lo2 = mid2 + 1; }
+              else { hi2 = mid2 - 1; }
+            }
+            document.body.removeChild(testEl2);
+            if (bf2 <= 0) bf2 = Math.max(1, Math.min(10, remainWords.length));
+            const chunk = { type: "para", text: remainWords.slice(0, bf2).join(" ") };
+            curPageBlocks.push(chunk);
+            curH = elH; // approximate
+            if (bf2 >= remainWords.length) break;
+            remainWords = remainWords.slice(bf2);
+            pages.push(curPageBlocks);
+            curPageBlocks = [];
+            curH = 0;
+          }
+        } else {
+          // Can't fit any words — flush old page and start fresh
+          pages.push(curPageBlocks);
+          curPageBlocks = [block];
+          curH = elH;
+        }
+      } else {
+        // Empty page, paragraph too tall — just put it on this page anyway
+        curPageBlocks.push(block);
+        curH = elH;
+        // If still too tall, flush and continue
+        if (curH > safeH) {
+          pages.push(curPageBlocks);
+          curPageBlocks = [];
+          curH = 0;
+        }
       }
-
-      const chunk = words.slice(wi, wi + best).join(" ");
-      const chunkH = measureBlockH(chunk, "para") ?? minLineH;
-      cur.push({ type: "para", text: chunk });
-      curH += gap + chunkH;
-      wi += best;
-
-      if (safeH - curH < minLineH && wi < words.length) flush();
     }
   }
-  flush();
+
+  if (curPageBlocks.length > 0) pages.push(curPageBlocks);
+
+  document.body.removeChild(host);
+
   return pages.length > 0 ? pages : [[{ type: "para", text: "" }]];
+}
+
+// ── Pre-rendered page cache ──────────────────────────────────
+// Stores pre-built DOM nodes keyed by page index, so adjacent pages render instantly
+const _pageRenderCache = new Map();
+
+function _clearPageRenderCache() { _pageRenderCache.clear(); }
+
+// Pre-render adjacent pages in the background for instant transitions
+function _preRenderAdjacentPages() {
+  if (!state.activeBook || !state.pages) return;
+  const toPrerender = [
+    state.currentPage + 1,
+    state.currentPage - 1,
+    state.currentPage + 2,
+  ].filter(p => p >= 0 && p < state.pages.length);
+  
+  for (const pi of toPrerender) {
+    if (!_pageRenderCache.has(pi)) {
+      const data = state.pages[pi];
+      if (data) {
+        const wrapW = state.highlightWords || state.underlineLine;
+        _pageRenderCache.set(pi, constructPageDOM(data, wrapW));
+      }
+    }
+  }
 }
 
 function htmlToBlocks(html) {
@@ -587,6 +695,7 @@ async function initApp() {
 
   applyTheme(state.themeKey);
   renderLibrary();
+  renderAudiobooks();
   renderStreakDots();
 
   // Load saved notes
@@ -650,7 +759,7 @@ async function initApp() {
   document.getElementById("tap-zone-prev").onclick = prevPage;
   document.getElementById("tap-zone-next").onclick = nextPage;
   document.getElementById("btn-toggle-audio").onclick = toggleAudio;
-  document.getElementById("btn-upload-audio").onclick = () => document.getElementById("audio-input").click();
+  document.getElementById("btn-upload-audio").onclick = () => showAudioPanel();
   document.getElementById("btn-reader-notes").onclick = openNotesViewer;
   document.getElementById("btn-reader-settings").onclick = () => document.getElementById("reader-settings-panel").classList.toggle("hidden");
   document.getElementById("btn-chapter-drop").onclick = () => {
@@ -771,12 +880,18 @@ function renderAudiobooks() {
   const grid = document.getElementById("audiobook-grid");
   const empty = document.getElementById("audiobook-empty-state");
   const count = document.getElementById("audiobook-count");
+  const header = document.getElementById("audiobook-header-text");
   grid.innerHTML = "";
   const audiobBooks = state.library.filter(b => b.hasAudio);
-  count.textContent = `${audiobBooks.length} audiobook${audiobBooks.length !== 1 ? "s" : ""}`;
   if (audiobBooks.length === 0) {
-    empty.classList.remove("hidden"); return;
+    count.textContent = "";
+    if (header) header.classList.add("hidden");
+    empty.innerHTML = `No audiobooks downloaded.<br/><span>Supports .mp3 · .m4b · .wav · .ogg · .flac</span>`;
+    empty.classList.remove("hidden");
+    return;
   }
+  count.textContent = `${audiobBooks.length} audiobook${audiobBooks.length !== 1 ? "s" : ""}`;
+  if (header) header.classList.remove("hidden");
   empty.classList.add("hidden");
   audiobBooks.forEach(book => {
     const [c1, c2] = generateCoverColor(book.title);
@@ -843,6 +958,10 @@ function createBookCard(book) {
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5.5" r="2.5" stroke="currentColor" stroke-width="1.4"/><path d="M2.5 13c0-2.485 2.462-4.5 5.5-4.5s5.5 2.015 5.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
         Look up ${book.author.length > 20 ? book.author.slice(0,20)+'…' : book.author}
       </button>` : ''}
+      <button class="ctx-item summarize-book-btn">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="2" rx="1" fill="currentColor" opacity=".7"/><rect x="1" y="7" width="10" height="2" rx="1" fill="currentColor" opacity=".9"/><rect x="1" y="11" width="7" height="2" rx="1" fill="currentColor" opacity=".6"/></svg>
+        Search summary
+      </button>
       <button class="ctx-item reset-btn">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 8a5 5 0 1 1 1 3.1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><polyline points="1,5 3,8 6,6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         Reset progress
@@ -887,6 +1006,15 @@ function createBookCard(book) {
     }
   };
   el.querySelector(".reset-btn").onclick = (e) => { e.stopPropagation(); resetBookProgress(book.id); menu.classList.add("hidden"); };
+  el.querySelector(".summarize-book-btn")?.addEventListener("click", (e) => {
+    e.stopPropagation(); menu.classList.add("hidden");
+    if (state.ollamaUrl) {
+      showBookSummaryModal(book);
+    } else {
+      const q = encodeURIComponent(book.title + (book.author ? " by " + book.author : "") + " book summary");
+      window.open("https://duckduckgo.com/?q=" + q, "_blank");
+    }
+  });
   el.querySelector(".delete-btn").onclick = (e) => { e.stopPropagation(); deleteBook(book.id); menu.classList.add("hidden"); };
   el.querySelector(".lookup-book-btn")?.addEventListener("click", (e) => {
     e.stopPropagation(); menu.classList.add("hidden");
@@ -900,7 +1028,110 @@ function createBookCard(book) {
   return el;
 }
 
+// Show a modal to summarize a book — uses Ollama or falls back to Google search
+function showBookSummaryModal(book) {
+  // Remove any existing summary modal
+  const existing = document.getElementById("book-summary-modal");
+  if (existing) existing.remove();
+
+  const abortCtrl = new AbortController();
+
+  const modal = document.createElement("div");
+  modal.id = "book-summary-modal";
+  modal.className = "modal-overlay";
+  modal.innerHTML = `
+    <div class="modal-content" style="max-width:440px;">
+      <div class="modal-header">
+        <h2>Book Summary</h2>
+        <button class="btn-close" id="bsm-close">×</button>
+      </div>
+      <div style="padding:18px 22px 22px;">
+        <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;">
+          ${book.coverDataUrl 
+            ? `<img src="${book.coverDataUrl}" style="width:40px;height:56px;border-radius:4px;object-fit:cover;flex-shrink:0;">`
+            : `<div style="width:40px;height:56px;border-radius:4px;background:linear-gradient(135deg,#2C3E50,#3498DB);flex-shrink:0;"></div>`}
+          <div>
+            <div style="font-size:14px;font-weight:700;color:var(--text);">${book.title}</div>
+            ${book.author ? `<div style="font-size:12px;color:var(--textDim);margin-top:2px;">${book.author}</div>` : ""}
+          </div>
+        </div>
+        <div id="bsm-body" style="font-size:13px;color:var(--textMuted);line-height:1.65;min-height:80px;">
+          <span style="color:var(--textDim);font-style:italic;">Generating summary…</span>
+        </div>
+        <div style="margin-top:16px;display:flex;gap:10px;">
+          <a href="https://duckduckgo.com/?q=${encodeURIComponent('Summary of ' + book.title + (book.author ? ' by ' + book.author : ''))}" 
+             target="_blank" class="btn secondary" style="flex:1;justify-content:center;text-decoration:none;">
+            🔍 Search DuckDuckGo
+          </a>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  const closeModal = () => { abortCtrl.abort(); modal.remove(); };
+  modal.querySelector("#bsm-close").onclick = closeModal;
+  modal.onclick = (e) => { if (e.target === modal) closeModal(); };
+
+  // Generate AI summary
+  (async () => {
+    const bodyEl = document.getElementById("bsm-body");
+    if (!bodyEl) return;
+    try {
+      let summary = "";
+      const prompt = `Write a concise 3-4 sentence summary of the book "${book.title}"${book.author ? ` by ${book.author}` : ""}. Focus on the main themes, plot, and what makes it notable. Be factual and informative.`;
+      
+      if (state.ollamaUrl) {
+        const model = state.ollamaModel || "llama3";
+        const r = await fetch(`${getOllamaUrl()}/api/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model, prompt, stream: false }),
+          signal: abortCtrl.signal
+        });
+        if (r.ok) {
+          const d = await r.json();
+          summary = d?.response?.trim() || "";
+        }
+      }
+      
+      if (!summary) {
+        // Fallback: use Anthropic API
+        const r = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 200,
+            messages: [{ role: "user", content: prompt }]
+          }),
+          signal: abortCtrl.signal
+        });
+        const d = await r.json();
+        summary = d?.content?.[0]?.text || "";
+      }
+
+      const bsmBody = document.getElementById("bsm-body");
+      if (bsmBody) {
+        if (summary) {
+          bsmBody.innerHTML = `<p style="margin:0;">${summary}</p>`;
+        } else {
+          bsmBody.innerHTML = `<span style="color:var(--textDim);font-size:12px;">Could not generate summary. Try searching DuckDuckGo.</span>`;
+        }
+      }
+    } catch(err) {
+      if (err.name === "AbortError") return; // cancelled — do nothing
+      const bsmBody = document.getElementById("bsm-body");
+      if (bsmBody) bsmBody.innerHTML = `<span style="color:var(--textDim);font-size:12px;">Summary unavailable. Try searching DuckDuckGo for more information.</span>`;
+    }
+  })();
+}
+
 async function openBook(book, autoPlay = false) {
+  // Clear pagination and render caches for fresh layout on open
+  for (const key of [..._paginationCache.keys()]) {
+    if (key.startsWith(book.id + "|")) _paginationCache.delete(key);
+  }
+  _clearPageRenderCache();
   document.getElementById("loading-state").classList.remove("hidden");
   const pages = await loadBookContent(book.id);
   document.getElementById("loading-state").classList.add("hidden");
@@ -967,26 +1198,16 @@ function buildChapterDropdown() {
 
   const activeIdx = chaps.reduce((best, ch, i) => ch.pageIndex <= state.currentPage ? i : best, 0);
 
-  // Check if query is a page number
+  // Check if query could be a page number — show BOTH chapters AND page jump
   const pageNumMatch = q.match(/^p(?:age)?\s*(\d+)$|^(\d+)$/);
-  if (pageNumMatch) {
-    const pageNum = parseInt(pageNumMatch[1] || pageNumMatch[2], 10) - 1; // convert to 0-indexed
-    if (pageNum >= 0 && pageNum < state.pages.length) {
-      const el = document.createElement("div");
-      el.className = "chapter-item";
-      el.innerHTML = `<div class="ch-flex"><div class="ch-title">→ Jump to Page ${pageNum + 1}</div></div><div class="ch-sub">Page ${pageNum + 1} of ${state.pages.length}</div>`;
-      el.onclick = () => {
-        state.currentPage = pageNum;
-        updateProgress(state.currentPage);
-        document.getElementById("chapter-dropdown").classList.add("hidden");
-      };
-      list.appendChild(el);
-      return;
-    }
-  }
+  let pageJumpShown = false;
 
+  // Show chapter results first
+  // For a pure-number query show ALL chapters + page jump; for text filter normally
+  const isPureNumber = pageNumMatch && /^\d+$/.test(q);
   chaps.forEach((ch, i) => {
-    if (q && !ch.title.toLowerCase().includes(q)) return;
+    if (q && !isPureNumber && !ch.title.toLowerCase().includes(q)) return;
+    // For pure number queries: show all chapters (the page jump appears separately)
 
     const nextP = chaps[i+1]?.pageIndex ?? state.pages.length;
     const len = nextP - ch.pageIndex;
@@ -1001,49 +1222,97 @@ function buildChapterDropdown() {
     list.appendChild(el);
   });
 
-  document.getElementById("chapter-search").oninput = buildChapterDropdown;
-}
-
-// Re-paginate the current book when font settings change
-async function repaginateCurrentBook() {
-  if (!state.activeBook) return;
-  // Store the current reading position as a fraction
-  const fraction = state.pages.length > 1 ? state.currentPage / (state.pages.length - 1) : 0;
-
-  // Reload raw content and re-split
-  const pages = await loadBookContent(state.activeBook.id);
-  if (!pages) return;
-
-  // The stored pages are already split blocks — we need to flatten them back to blocks
-  // and re-split with new settings
-  const allBlocks = [];
-  for (const page of pages) {
-    if (Array.isArray(page)) {
-      for (const block of page) {
-        // Merge consecutive same-type blocks to avoid over-splitting
-        const last = allBlocks[allBlocks.length - 1];
-        if (last && last.type === "para" && block.type === "para") {
-          last.text += " " + block.text;
-        } else {
-          allBlocks.push({ ...block });
-        }
-      }
+  // Append page jump result below chapters when query is a number
+  if (pageNumMatch) {
+    const pageNum = parseInt(pageNumMatch[1] || pageNumMatch[2], 10) - 1;
+    if (pageNum >= 0 && pageNum < state.pages.length) {
+      const sep = document.createElement("div");
+      sep.style.cssText = "height:1px;background:var(--borderSubtle);margin:4px 12px;";
+      list.appendChild(sep);
+      const el = document.createElement("div");
+      el.className = "chapter-item chapter-item-page-jump";
+      el.innerHTML = `<div class="ch-flex"><div class="ch-title" style="color:var(--accent);">
+        <svg width="11" height="11" viewBox="0 0 14 14" fill="none" style="margin-right:4px;vertical-align:-1px;"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        Page ${pageNum + 1}</div></div><div class="ch-sub">Jump to page ${pageNum + 1} of ${state.pages.length}</div>`;
+      el.onclick = () => {
+        state.currentPage = pageNum;
+        updateProgress(state.currentPage);
+        document.getElementById("chapter-dropdown").classList.add("hidden");
+      };
+      list.appendChild(el);
     }
   }
 
-  const newPages = splitBlocksIntoPages(allBlocks);
+  document.getElementById("chapter-search").oninput = buildChapterDropdown;
+}
+
+// ─── Page layout cache ───────────────────────────────────────
+// Key: "bookId|fontSize|lineSpacing|fontFamily|twoPage"
+// Value: { pages, chapters }
+const _paginationCache = new Map();
+
+function _paginationCacheKey() {
+  return `${state.activeBook?.id}|${state.fontSize}|${state.lineSpacing}|${state.fontFamily}|${state.twoPage}`;
+}
+
+// Flatten stored pages (already split) back to raw blocks for re-splitting
+function _flattenToBlocks(storedPages) {
+  const allBlocks = [];
+  for (const page of storedPages) {
+    if (!Array.isArray(page)) continue;
+    for (const block of page) {
+      const last = allBlocks[allBlocks.length - 1];
+      if (last && last.type === "para" && block.type === "para") {
+        last.text += " " + block.text;
+      } else {
+        allBlocks.push({ ...block });
+      }
+    }
+  }
+  return allBlocks;
+}
+
+// Re-paginate the current book when font/layout settings change.
+// Results are cached so repeated changes (e.g. sliding font-size) are instant.
+async function repaginateCurrentBook() {
+  if (!state.activeBook) return;
+
+  _clearPageRenderCache();
+
+  const cacheKey = _paginationCacheKey();
+  const fraction = state.pages.length > 1 ? state.currentPage / (state.pages.length - 1) : 0;
+
+  let newPages, newChapters;
+
+  if (_paginationCache.has(cacheKey)) {
+    // Instant — use pre-computed layout
+    ({ pages: newPages, chapters: newChapters } = _paginationCache.get(cacheKey));
+  } else {
+    // Load raw content from storage and re-split
+    const storedPages = await loadBookContent(state.activeBook.id);
+    if (!storedPages) return;
+    const allBlocks = _flattenToBlocks(storedPages);
+    newPages = splitBlocksIntoPages(allBlocks);
+    newChapters = deriveChaptersFromPages(newPages);
+    // Cache result (keep cache bounded)
+    _paginationCache.set(cacheKey, { pages: newPages, chapters: newChapters });
+    if (_paginationCache.size > 20) {
+      _paginationCache.delete(_paginationCache.keys().next().value);
+    }
+  }
+
   state.pages = newPages;
-  state.activeBook.chapters = deriveChaptersFromPages(newPages);
+  state.activeBook.chapters = newChapters;
   state.activeBook.totalPages = newPages.length;
 
-  // Restore position proportionally
+  // Restore reading position proportionally
   state.currentPage = Math.min(Math.round(fraction * (newPages.length - 1)), newPages.length - 1);
   state.activeBook.currentPage = state.currentPage;
   const idx = state.library.findIndex(b => b.id === state.activeBook.id);
   if (idx > -1) {
     state.library[idx].currentPage = state.currentPage;
     state.library[idx].totalPages = newPages.length;
-    state.library[idx].chapters = state.activeBook.chapters;
+    state.library[idx].chapters = newChapters;
   }
   saveLibrary();
 }
@@ -1056,6 +1325,21 @@ function buildReaderSettings() {
   const ulOn = state.underlineLine;
 
   panel.innerHTML = `
+    <div class="section-label">THEME</div>
+    <div class="radio-list" id="reader-theme-list" style="margin-bottom:14px;">
+      ${Object.entries({...BUILT_IN_THEMES,...state.customThemes}).map(([k,t]) => `
+        <label class="radio-item ${state.themeKey===k?'active':''}" style="cursor:pointer;">
+          <input type="radio" name="reader-theme" value="${k}" ${state.themeKey===k?'checked':''} style="accent-color:var(--accent);">
+          <div style="display:flex; gap:4px;">
+            <div class="swatch" style="background:${t.bg}"></div>
+            <div class="swatch" style="background:${t.surface}"></div>
+            <div class="swatch" style="background:${t.accent||'#888'}"></div>
+          </div>
+          <span style="font-size:12px; font-weight:500; color:var(--text); flex:1;">${t.name}</span>
+          ${k.startsWith("custom_") ? `<span style="font-size:10px; color:var(--textDim);">Custom</span>` : ""}
+        </label>
+      `).join("")}
+    </div>
     <div class="section-label">DISPLAY</div>
     <label style="display:block; margin-bottom:12px; font-size:12px;">
       <div style="display:flex; justify-content:space-between; margin-bottom:5px;"><span>Font Size</span><span style="color:var(--textDim)">${state.fontSize}px</span></div>
@@ -1097,22 +1381,37 @@ function buildReaderSettings() {
     </div>
   `;
 
+  panel.querySelectorAll("input[name='reader-theme']").forEach(radio => {
+    radio.onchange = (e) => {
+      state.themeKey = e.target.value;
+      applyTheme(state.themeKey);
+      savePreferences();
+      buildReaderSettings();
+    };
+  });
+
   document.getElementById("fs-slider").oninput = async (e) => {
     state.fontSize = +e.target.value;
     e.target.previousElementSibling.lastElementChild.textContent = `${state.fontSize}px`;
     await repaginateCurrentBook();
     renderPage();
+    updateReaderNav();
+    buildChapterDropdown();
   };
   document.getElementById("ls-slider").oninput = async (e) => {
     state.lineSpacing = +e.target.value;
     e.target.previousElementSibling.lastElementChild.textContent = state.lineSpacing;
     await repaginateCurrentBook();
     renderPage();
+    updateReaderNav();
+    buildChapterDropdown();
   };
   document.getElementById("font-select").onchange = async (e) => {
     state.fontFamily = e.target.value;
     await repaginateCurrentBook();
     renderPage();
+    updateReaderNav();
+    buildChapterDropdown();
   };
 
   document.getElementById("tap-toggle").onclick = () => {
@@ -1121,16 +1420,29 @@ function buildReaderSettings() {
   };
   document.getElementById("two-page-toggle").onclick = async () => {
     state.twoPage = !state.twoPage;
+    // Apply layout class immediately for snappy feel
+    document.getElementById("reader-card").classList.toggle("two-page", state.twoPage);
+    buildReaderSettings();
+    savePreferences();
     await repaginateCurrentBook();
-    buildReaderSettings(); renderPage(); savePreferences();
+    renderPage();
+    updateReaderNav();
+    buildChapterDropdown();
   };
   document.getElementById("hl-toggle").onclick = () => {
     state.highlightWords = !state.highlightWords;
-    buildReaderSettings(); applyAccessibilityClasses(); savePreferences();
+    buildReaderSettings();
+    applyAccessibilityClasses();
+    // Re-render page to attach/detach word listeners immediately
+    renderPage();
+    savePreferences();
   };
   document.getElementById("ul-toggle").onclick = () => {
     state.underlineLine = !state.underlineLine;
-    buildReaderSettings(); applyAccessibilityClasses(); savePreferences();
+    buildReaderSettings();
+    applyAccessibilityClasses();
+    renderPage();
+    savePreferences();
   };
 }
 
@@ -1149,6 +1461,7 @@ function wrapWordsInSpans(text) {
 let _selToolbarEl = null;
 let _notePanelEl = null;
 let _summaryPopupEl = null;
+let _summaryAbortCtrl = null;
 let _selectionTimer = null;
 
 // Notes stored in state
@@ -1161,6 +1474,7 @@ function removeNotePanel() {
   if (_notePanelEl) { _notePanelEl.remove(); _notePanelEl = null; }
 }
 function removeSummaryPopup() {
+  if (_summaryAbortCtrl) { _summaryAbortCtrl.abort(); _summaryAbortCtrl = null; }
   if (_summaryPopupEl) { _summaryPopupEl.remove(); _summaryPopupEl = null; }
 }
 
@@ -1202,7 +1516,11 @@ function showSelectionToolbar(selectedText, range) {
     </button>
     <button class="sel-btn" id="sel-add-note">
       <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2 2h12v10H8l-4 3V2z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><line x1="5" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><line x1="5" y1="9" x2="9" y2="9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-      Add Note
+      Note
+    </button>
+    <button class="sel-btn" id="sel-play-audio">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21" opacity="0.8"/></svg>
+      Play
     </button>
   `;
   document.body.appendChild(toolbar);
@@ -1232,10 +1550,27 @@ function showSelectionToolbar(selectedText, range) {
     removeSelToolbar();
     showAddNotePanel(txt, rect);
   };
+  toolbar.querySelector("#sel-play-audio").onclick = (e) => {
+    e.stopPropagation();
+    removeSelToolbar();
+    // Use browser TTS to read selected text
+    const txt = selectedText;
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      const utt = new SpeechSynthesisUtterance(txt);
+      utt.rate = 0.95;
+      window.speechSynthesis.speak(utt);
+    } else {
+      showToast(false, "Text-to-speech not supported in this browser.");
+      setTimeout(hideToast, 2000);
+    }
+  };
 }
 
 async function showSummaryPopup(text, anchorRect) {
   removeSummaryPopup();
+  _summaryAbortCtrl = new AbortController();
+  const abortCtrl = _summaryAbortCtrl;
   const popup = document.createElement("div");
   popup.className = "summary-popup";
   _summaryPopupEl = popup;
@@ -1270,14 +1605,15 @@ async function showSummaryPopup(text, anchorRect) {
     if (state.ollamaUrl) {
       // Use Ollama local LLM
       const model = state.ollamaModel || "llama3";
-      const r = await fetch(`${state.ollamaUrl}/api/generate`, {
+      const r = await fetch(`${getOllamaUrl()}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model,
           prompt: `Summarize this passage from a book in 2–3 concise sentences:\n\n"${text}"\n\nSummary:`,
           stream: false
-        })
+        }),
+        signal: abortCtrl.signal
       });
       if (r.ok) {
         const d = await r.json();
@@ -1294,14 +1630,16 @@ async function showSummaryPopup(text, anchorRect) {
           model: "claude-sonnet-4-20250514",
           max_tokens: 180,
           messages: [{ role: "user", content: `Summarize this passage from a book in 2–3 concise sentences:\n\n"${text}"` }]
-        })
+        }),
+        signal: abortCtrl.signal
       });
       const data = await res.json();
       summary = data?.content?.[0]?.text || "Could not generate summary.";
     }
     const body = document.getElementById("summary-body");
     if (body) body.innerHTML = `<p style="margin:0;">${summary}</p>`;
-  } catch {
+  } catch(err) {
+    if (err.name === "AbortError") return; // cancelled — do nothing
     const body = document.getElementById("summary-body");
     if (body) body.innerHTML = `<span style="color:var(--textDim);font-size:12px;">Summary unavailable. ${state.ollamaUrl ? "Check Ollama connection." : "API unavailable."}</span>`;
   }
@@ -1408,6 +1746,8 @@ function showWordPopup(word, anchorEl) {
   // Grab surrounding sentence for context-aware translation
   const para = anchorEl.closest("p");
   const sentenceCtx = para ? extractSentenceAround(para.textContent || "", word) : word;
+  // Check if the clicked word is inside a highlight mark
+  const insideHighlight = !!anchorEl.closest("mark.reader-highlight");
 
   const popup = document.createElement("div");
   popup.className = "word-popup";
@@ -1415,6 +1755,10 @@ function showWordPopup(word, anchorEl) {
 
   popup.innerHTML = `
     <div class="word-popup-actions">
+      ${insideHighlight ? `<button class="word-popup-btn" id="wp-unhighlight" style="color:#f85149;">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><line x1="3" y1="3" x2="13" y2="13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="13" y1="3" x2="3" y2="13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        Remove
+      </button>` : ""}
       <button class="word-popup-btn" id="wp-define">
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.5"/><line x1="5" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><line x1="5" y1="9" x2="9" y2="9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
         Define
@@ -1439,6 +1783,17 @@ function showWordPopup(word, anchorEl) {
   if (top + 200 > window.innerHeight) top = rect.top - 208;
   popup.style.top = `${top}px`;
   popup.style.left = `${left}px`;
+
+  // Unhighlight handler
+  popup.querySelector("#wp-unhighlight")?.addEventListener("click", () => {
+    const mark = anchorEl.closest("mark.reader-highlight");
+    if (mark) {
+      const parent = mark.parentNode;
+      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+      parent.removeChild(mark);
+    }
+    removeWordPopup();
+  });
 
   popup.querySelector("#wp-define").onclick = async () => {
     const res = document.getElementById("wp-result");
@@ -1486,15 +1841,36 @@ function showWordPopup(word, anchorEl) {
       const out = res.querySelector("#wp-trans-result");
       out.innerHTML = `<span class="wp-loading">Translating…</span>`;
       try {
-        // Use full sentence context for accurate translation, extract the word translation
+        // Use 3-sentence context window for translation
         const textToTranslate = sentenceCtx.length > 6 ? sentenceCtx : word;
-        const r = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(textToTranslate)}&langpair=en|${lang}`);
-        const d = await r.json();
-        const translatedSentence = d?.responseData?.translatedText || "";
-        const quality = parseInt(d?.responseData?.match || "0");
-
-        // Also get a single-word fallback translation for reference
+        
+        // Try multiple translation APIs for better accuracy
+        let translatedSentence = "";
         let wordOnly = "";
+        let apiUsed = "";
+        
+        // Attempt 1: MyMemory (good for common languages)
+        try {
+          const r = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(textToTranslate)}&langpair=en|${lang}&de=gnos@reader.app`);
+          const d = await r.json();
+          const t = d?.responseData?.translatedText || "";
+          const quality = parseInt(d?.responseData?.match || "0");
+          if (t && t.toLowerCase() !== textToTranslate.toLowerCase() && quality >= 60) {
+            translatedSentence = t;
+            apiUsed = "MyMemory";
+          }
+        } catch {}
+        
+        // Attempt 2: Lingva (Google Translate proxy) if MyMemory gave low quality
+        if (!translatedSentence) {
+          try {
+            const r = await fetch(`https://lingva.ml/api/v1/en/${lang}/${encodeURIComponent(textToTranslate)}`);
+            const d = await r.json();
+            if (d?.translation) { translatedSentence = d.translation; apiUsed = "Lingva"; }
+          } catch {}
+        }
+        
+        // Word-only translation for reference
         if (textToTranslate !== word) {
           try {
             const r2 = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(word)}&langpair=en|${lang}`);
@@ -1504,15 +1880,15 @@ function showWordPopup(word, anchorEl) {
           } catch {}
         }
 
-        if (translatedSentence && translatedSentence.toLowerCase() !== textToTranslate.toLowerCase()) {
+        if (translatedSentence) {
           out.style.fontStyle = "normal";
           out.innerHTML = `
             ${wordOnly ? `<div style="margin-bottom:6px;"><strong style="color:var(--text);font-size:14px;">${wordOnly}</strong> <span style="font-size:10px;color:var(--textDim);">(word)</span></div>` : ""}
             <div style="font-size:11px;color:var(--textMuted);line-height:1.55;border-left:2px solid var(--accent);padding-left:7px;font-style:italic;">${translatedSentence}</div>
-            ${quality < 75 ? `<div style="font-size:9px;color:var(--textDim);margin-top:4px;">⚠ Low confidence translation</div>` : ""}
+            <div style="font-size:9px;color:var(--textDim);margin-top:3px;">${apiUsed}</div>
           `;
         } else {
-          out.innerHTML = `<span class="wp-error">Translation unavailable for this language.</span>`;
+          out.innerHTML = `<span class="wp-error">Translation unavailable. Try a different language.</span>`;
         }
       } catch {
         out.innerHTML = `<span class="wp-error">Translation failed. Check your connection.</span>`;
@@ -1531,19 +1907,21 @@ function attachWordClickListeners(container) {
       showWordPopup(word, span);
     };
 
-    // Underline current line: highlight words at same vertical position
+    // Underline current line: highlight words at same vertical position using accurate rect check
     if (state.underlineLine) {
-      span.addEventListener("mouseenter", () => {
-        const rect = span.getBoundingClientRect();
-        const midY = rect.top + rect.height / 2;
-        // Find all word spans in same paragraph
+      span.addEventListener("mousemove", (ev) => {
+        const hoveredRect = span.getBoundingClientRect();
+        // Use the actual top of the line (not midpoint) for precision
+        const lineTop = hoveredRect.top;
+        const lineBot = hoveredRect.bottom;
         const para = span.closest("p");
         if (!para) return;
         para.querySelectorAll(".word").forEach(w => {
           const wr = w.getBoundingClientRect();
-          const wMidY = wr.top + wr.height / 2;
-          // Same line = within half a line height vertically
-          if (Math.abs(wMidY - midY) < rect.height * 0.6) {
+          // Word is on the same line if it overlaps vertically with the hovered word
+          const overlapTop = Math.max(wr.top, lineTop);
+          const overlapBot = Math.min(wr.bottom, lineBot);
+          if (overlapBot - overlapTop > hoveredRect.height * 0.35) {
             w.classList.add("same-line");
           } else {
             w.classList.remove("same-line");
@@ -1567,7 +1945,7 @@ function constructPageDOM(pageData, wrapWords) {
 
   if (typeof pageData === "string") {
     const txt = wrapWords ? wrapWordsInSpans(decodeEntities(pageData)) : decodeEntities(pageData);
-    container.innerHTML = `<p style="color:var(--readerText); font-size:${state.fontSize}px; line-height:${state.lineSpacing}; margin:0; text-align:justify; word-break:break-word;">${txt}</p>`;
+    container.innerHTML = `<p style="color:var(--readerText); font-size:${state.fontSize}px; line-height:${state.lineSpacing}; margin:0; text-align:justify; word-break:break-word; hyphens:auto;">${txt}</p>`;
     return container;
   }
 
@@ -1578,24 +1956,31 @@ function constructPageDOM(pageData, wrapWords) {
     container.innerHTML = `
       <div style="color:var(--readerText); height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:${Math.round(state.fontSize * 3)}px 0;">
         <div style="width:48px; height:2px; background:var(--accent); border-radius:1px; margin-bottom:${Math.round(state.fontSize * 2.5)}px; opacity:0.6;"></div>
-        ${h ? `<div style="font-size:${Math.round(state.fontSize * 2.0)}px; font-weight:700; line-height:1.2; letter-spacing:-0.02em; margin-bottom:${s?Math.round(state.fontSize*1):0}px;">${h.text}</div>` : ""}
-        ${s ? `<div style="font-size:${Math.round(state.fontSize * 1.2)}px; font-weight:400; line-height:1.4; opacity:0.65; font-style:italic; margin-top:${Math.round(state.fontSize*0.5)}px;">${s.text}</div>` : ""}
+        ${h ? `<div style="font-size:${Math.round(state.fontSize * 2.0)}px; font-weight:700; line-height:1.2; letter-spacing:-0.02em; margin-bottom:${s?Math.round(state.fontSize*1):0}px; font-family:Georgia,serif;">${h.text}</div>` : ""}
+        ${s ? `<div style="font-size:${Math.round(state.fontSize * 1.2)}px; font-weight:400; line-height:1.4; opacity:0.65; font-style:italic; margin-top:${Math.round(state.fontSize*0.5)}px; font-family:Georgia,serif;">${s.text}</div>` : ""}
         <div style="width:48px; height:2px; background:var(--accent); border-radius:1px; margin-top:${Math.round(state.fontSize * 2.5)}px; opacity:0.6;"></div>
       </div>
     `;
     return container;
   }
 
+  // Render body page with proper paragraph styles for reflow
   pageData.forEach((block, i) => {
     if (!block?.text?.trim()) return;
     const el = document.createElement(block.type === "para" ? "p" : "div");
+    const paraGap = Math.round(state.fontSize * 0.55);
     if (block.type === "heading") {
-      el.style.cssText = `font-family:Georgia,serif; font-size:${Math.round(state.fontSize*1.4)}px; font-weight:700; line-height:1.25; margin-top:${i===0?0:Math.round(state.fontSize*1.8)}px; margin-bottom:${Math.round(state.fontSize*0.9)}px; padding-bottom:${Math.round(state.fontSize*0.4)}px; border-bottom:1px solid var(--borderSubtle);`;
+      el.style.cssText = `font-family:Georgia,serif; font-size:${Math.round(state.fontSize*1.65)}px; font-weight:700; line-height:1.2; margin:${i===0?0:Math.round(state.fontSize*1.8)}px 0 ${Math.round(state.fontSize*0.7)}px 0; padding-bottom:${Math.round(state.fontSize*0.4)}px; border-bottom:1px solid var(--borderSubtle); color:var(--readerText); word-break:break-word;`;
     } else if (block.type === "subheading") {
-      el.style.cssText = `font-family:Georgia,serif; font-size:${Math.round(state.fontSize*1.15)}px; font-weight:600; line-height:1.35; opacity:0.85; margin-top:${i===0?0:Math.round(state.fontSize*1.2)}px; margin-bottom:${Math.round(state.fontSize*0.55)}px;`;
+      el.style.cssText = `font-family:Georgia,serif; font-size:${Math.round(state.fontSize*1.18)}px; font-weight:600; line-height:1.3; opacity:0.85; margin:${i===0?0:Math.round(state.fontSize*1.2)}px 0 ${Math.round(state.fontSize*0.5)}px 0; color:var(--readerText); word-break:break-word;`;
     } else {
       const prevIsNonPara = i === 0 || pageData[i - 1]?.type !== "para";
-      el.style.cssText = `font-size:${state.fontSize}px; line-height:${state.lineSpacing}; margin:0; margin-bottom:${prevIsNonPara?Math.round(state.fontSize*0.6):0}px; text-indent:${prevIsNonPara?0:"2em"}; text-align:justify; word-break:break-word; hyphens:auto;`;
+      const isFirst = i === 0;
+      el.style.cssText = `font-size:${state.fontSize}px; line-height:${state.lineSpacing}; margin:0; margin-bottom:${i < pageData.length-1 ? 0 : 0}px; text-indent:${prevIsNonPara||isFirst ? 0 : "2em"}; text-align:justify; word-break:break-word; hyphens:auto; color:var(--readerText);`;
+      // Add paragraph gap to all paras except last
+      if (i < pageData.length - 1 && pageData[i+1]?.type === "para") {
+        el.style.marginBottom = `${paraGap}px`;
+      }
     }
     if (wrapWords && block.type === "para") {
       el.innerHTML = wrapWordsInSpans(block.text);
@@ -1614,67 +1999,93 @@ function renderPage() {
   removeSummaryPopup();
   removeNotePanel();
 
-  // Recalculate pages if font settings changed since last render
-  if (state.activeBook && state._lastFontSize !== state.fontSize ||
-      state._lastLineSpacing !== state.lineSpacing ||
-      state._lastFontFamily !== state.fontFamily ||
-      state._lastTwoPage !== state.twoPage) {
-    // We need to re-split pages from the stored content
-    // But pages are already split - just re-render what we have
-    state._lastFontSize = state.fontSize;
-    state._lastLineSpacing = state.lineSpacing;
-    state._lastFontFamily = state.fontFamily;
-    state._lastTwoPage = state.twoPage;
-  }
-
   const page1 = state.pages[state.currentPage];
   const page2 = state.twoPage ? state.pages[state.currentPage + 1] : null;
   const card = document.getElementById("reader-card");
-  card.innerHTML = "";
 
   card.classList.toggle("two-page", state.twoPage);
   applyAccessibilityClasses();
 
   if (!page1) return;
 
-  const wrapW = state.highlightWords;
+  // Wrap words if highlightWords OR underlineLine (both need .word spans)
+  const wrapW = state.highlightWords || state.underlineLine;
 
-  if (state.twoPage) {
-    const p1 = constructPageDOM(page1, wrapW);
-    card.appendChild(p1);
-    const divider = document.createElement("div");
-    divider.className = "page-divider";
-    card.appendChild(divider);
-    const p2 = page2 ? constructPageDOM(page2, wrapW) : (() => { const e = document.createElement("div"); e.className="reader-page"; return e; })();
-    card.appendChild(p2);
-    if (wrapW) { attachWordClickListeners(p1); attachWordClickListeners(p2); }
+  // Fade transition
+  card.style.transition = "opacity 0.12s ease";
+  card.style.opacity = "0";
+
+  requestAnimationFrame(() => {
+    card.innerHTML = "";
+
+    // Use cache for current page, build if missing
+    let p1;
+    const cacheKey1 = `${state.currentPage}:${wrapW}`;
+    if (_pageRenderCache.has(cacheKey1)) {
+      p1 = _pageRenderCache.get(cacheKey1).cloneNode(true);
+    } else {
+      p1 = constructPageDOM(page1, wrapW);
+      _pageRenderCache.set(cacheKey1, p1.cloneNode(true));
+    }
+
+    if (state.twoPage) {
+      card.appendChild(p1);
+      const divider = document.createElement("div");
+      divider.className = "page-divider";
+      card.appendChild(divider);
+
+      let p2;
+      if (page2) {
+        const cacheKey2 = `${state.currentPage + 1}:${wrapW}`;
+        if (_pageRenderCache.has(cacheKey2)) {
+          p2 = _pageRenderCache.get(cacheKey2).cloneNode(true);
+        } else {
+          p2 = constructPageDOM(page2, wrapW);
+          _pageRenderCache.set(cacheKey2, p2.cloneNode(true));
+        }
+      } else {
+        p2 = document.createElement("div");
+        p2.className = "reader-page";
+      }
+      card.appendChild(p2);
+      attachWordClickListeners(p1);
+      attachWordClickListeners(p2);
+    } else {
+      card.appendChild(p1);
+      attachWordClickListeners(p1);
+    }
+
     addBookmarkIcons(card);
-  } else {
-    const p1 = constructPageDOM(page1, wrapW);
-    card.appendChild(p1);
-    if (wrapW) attachWordClickListeners(p1);
-    addBookmarkIcons(card);
-  }
+
+    // Fade in
+    requestAnimationFrame(() => {
+      card.style.opacity = "1";
+      // Pre-render adjacent pages in background
+      setTimeout(_preRenderAdjacentPages, 50);
+    });
+  });
 }
 
-// Add bookmark icons where notes exist on this page
+// Add bookmark icons where notes exist on this page — placed in margin, no text displacement
 function addBookmarkIcons(card) {
   if (!state.activeBook || !state.notes) return;
   const notes = state.notes[state.activeBook.id] || [];
   const pageNotes = notes.filter(n => n.page === state.currentPage);
   if (pageNotes.length === 0) return;
 
-  // Find paragraphs that contain the noted quote
   const paras = card.querySelectorAll("p");
   pageNotes.forEach(note => {
     const quote = note.quote.slice(0, 40).toLowerCase();
     for (const para of paras) {
       if (para.textContent.toLowerCase().includes(quote)) {
-        // Insert bookmark icon at beginning of para
+        // Use a margin-based absolute icon so it doesn't shift text
+        para.style.position = "relative";
+        // Remove any pre-existing bookmark on this para to avoid doubles
+        para.querySelectorAll(".note-bookmark-icon").forEach(n => n.remove());
         const icon = document.createElement("span");
         icon.className = "note-bookmark-icon";
         icon.title = note.text;
-        icon.innerHTML = `<svg width="11" height="14" viewBox="0 0 11 14" fill="none"><path d="M1 1h9v12l-4.5-3L1 13V1z" fill="var(--accent)" stroke="var(--accent)" stroke-width="1" stroke-linejoin="round"/></svg>`;
+        icon.innerHTML = `<svg width="10" height="14" viewBox="0 0 11 14" fill="none"><path d="M1 1h9v12l-4.5-3L1 13V1z" fill="var(--accent)" stroke="var(--accent)" stroke-width="1" stroke-linejoin="round"/></svg>`;
         para.insertBefore(icon, para.firstChild);
         break;
       }
@@ -1692,7 +2103,25 @@ function updateReaderNav() {
 
   const pct = state.pages.length > 1 ? (state.currentPage / (state.pages.length - 1)) * 100 : 0;
 
-  document.getElementById("page-indicator").textContent = `Page ${state.currentPage + 1} of ${state.pages.length} · ${Math.round(pct)}% · ${pagesLeft}p left`;
+  const pageInd = document.getElementById("page-indicator");
+  // Render as: "Page [input] of N · pct% · Np left"
+  // Use an input in place of the current page number so user can type and jump
+  pageInd.innerHTML = `Page <input id="page-num-input" type="number" min="1" max="${state.pages.length}" value="${state.currentPage + 1}" style="width:${Math.max(36, String(state.pages.length).length * 10 + 16)}px;background:transparent;border:none;border-bottom:1px solid var(--textDim);color:var(--text);font-size:inherit;font-family:inherit;text-align:center;padding:0 2px;outline:none;-moz-appearance:textfield;"> of ${state.pages.length} · ${Math.round(pct)}% · ${pagesLeft}p left`;
+  const pnInput = document.getElementById("page-num-input");
+  if (pnInput) {
+    pnInput.onclick = (e) => { e.stopPropagation(); pnInput.select(); };
+    const doJump = () => {
+      const val = parseInt(pnInput.value, 10);
+      if (!isNaN(val) && val >= 1 && val <= state.pages.length) {
+        state.currentPage = val - 1;
+        updateProgress(state.currentPage);
+      } else {
+        pnInput.value = state.currentPage + 1; // reset invalid
+      }
+    };
+    pnInput.onblur = doJump;
+    pnInput.onkeydown = (e) => { if (e.key === "Enter") { doJump(); pnInput.blur(); } if (e.key === "Escape") { pnInput.value = state.currentPage + 1; pnInput.blur(); } };
+  }
   document.getElementById("progress-bar").style.width = `${pct}%`;
 
   document.getElementById("btn-prev-page").disabled = state.currentPage === 0;
@@ -1785,7 +2214,11 @@ async function deleteBook(id) {
 
 async function resetBookProgress(id) {
   const idx = state.library.findIndex(b => b.id === id);
-  if (idx > -1) state.library[idx].currentPage = 0;
+  if (idx > -1) {
+    const saved = state.library[idx].timesRead; // preserve timesRead
+    state.library[idx].currentPage = 0;
+    if (saved !== undefined) state.library[idx].timesRead = saved;
+  }
   saveLibrary(); renderLibrary();
 }
 
@@ -1862,7 +2295,12 @@ async function handleFolderSelect(e) {
 
   for (const file of files) {
     if (file.name.startsWith(".") || (!/\.(txt|md|epub3?)$/i.test(file.name))) continue;
-    const alreadyAdded = state.library.some(b => b.title === file.name.replace(/\.(txt|md|epub3?)$/i,"").replace(/[_-]/g," "));
+    // Deduplicate: check both filename-derived title and stored book titles (case-insensitive)
+    const derivedTitle = file.name.replace(/\.(txt|md|epub3?)$/i,"").replace(/[_-]/g," ").toLowerCase().trim();
+    const alreadyAdded = state.library.some(b => 
+      b.title.toLowerCase().trim() === derivedTitle ||
+      b.title.toLowerCase().replace(/[\s\-_]+/g,"") === derivedTitle.replace(/[\s\-_]+/g,"")
+    );
     if (alreadyAdded) continue;
 
     try {
@@ -1881,6 +2319,13 @@ async function handleFolderSelect(e) {
         bookPages = splitBlocksIntoPages(textToBlocks(text));
         chapters = deriveChaptersFromPages(bookPages);
       }
+      // Second-pass dedup: check actual parsed book title
+      const parsedNorm = bookTitle.toLowerCase().trim().replace(/[\s\-_]+/g, "");
+      const titleExists = state.library.some(b =>
+        b.title.toLowerCase().trim().replace(/[\s\-_]+/g, "") === parsedNorm
+      );
+      if (titleExists) continue;
+
       const id = `book_${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
       if (coverDataUrl) await window.storage.set(`cover_${id}`, coverDataUrl);
       await saveBookContent(id, bookPages);
@@ -1896,6 +2341,140 @@ async function handleFolderSelect(e) {
     switchModalTab("library");
   }
   e.target.value = "";
+}
+
+// Audio panel: shows playback controls or no-audio message
+let _audioPanelEl = null;
+
+function removeAudioPanel() {
+  if (_audioPanelEl) { _audioPanelEl.remove(); _audioPanelEl = null; }
+}
+
+function showAudioPanel() {
+  if (_audioPanelEl && document.body.contains(_audioPanelEl)) { removeAudioPanel(); return; }
+  removeAudioPanel();
+
+  const panel = document.createElement("div");
+  panel.className = "audio-panel";
+  _audioPanelEl = panel;
+
+  const hasAudio = !!state.audioSrc;
+  const player = document.getElementById("audio-player");
+
+  if (hasAudio) {
+    const dur = player.duration && !isNaN(player.duration) ? player.duration : 0;
+    const cur = player.currentTime || 0;
+    const pct = dur > 0 ? (cur / dur) * 100 : 0;
+    const fmt = (s) => {
+      const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+      return `${m}:${sec.toString().padStart(2,"0")}`;
+    };
+
+    panel.innerHTML = `
+      <div class="audio-panel-header">
+        <span class="audio-panel-title">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" style="opacity:0.7">
+            <path d="M9 19c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2v-1c0-1.1.9-2 2-2h2c1.1 0 2 .9 2 2v1zM21 16c0 1.1-.9 2-2 2h-2c-1.1 0-2-.9-2-2v-1c0-1.1.9-2 2-2h2c1.1 0 2 .9 2 2v1z" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M9 20V8l12-3v11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Audiobook
+        </span>
+        <button class="audio-panel-close">×</button>
+      </div>
+      <div class="audio-panel-body">
+        <div class="audio-progress-row">
+          <span class="audio-time-cur">${fmt(cur)}</span>
+          <div class="audio-progress-track">
+            <div class="audio-progress-fill" style="width:${pct}%"></div>
+            <input type="range" class="audio-seek" min="0" max="${Math.floor(dur) || 100}" value="${Math.floor(cur)}" style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;margin:0;">
+          </div>
+          <span class="audio-time-dur">${dur > 0 ? fmt(dur) : "--:--"}</span>
+        </div>
+        <div class="audio-controls-row">
+          <button class="audio-ctrl-btn" id="apanel-skip-back" title="−30s">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z" fill="currentColor" opacity=".8"/><text x="12" y="14" text-anchor="middle" font-size="6" fill="currentColor" font-weight="700">30</text></svg>
+          </button>
+          <button class="audio-ctrl-btn audio-play-btn" id="apanel-play" title="${state.isPlaying ? 'Pause' : 'Play'}">
+            ${state.isPlaying
+              ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`
+              : `<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>`}
+          </button>
+          <button class="audio-ctrl-btn" id="apanel-skip-fwd" title="+30s">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 5V1l5 5-5 5V7c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6h2c0 4.42-3.58 8-8 8s-8-3.58-8-8 3.58-8 8-8z" fill="currentColor" opacity=".8"/><text x="12" y="14" text-anchor="middle" font-size="6" fill="currentColor" font-weight="700">30</text></svg>
+          </button>
+        </div>
+        <div style="text-align:center;margin-top:10px;">
+          <button class="audio-ctrl-btn" id="apanel-replace" title="Replace audio file" style="font-size:11px;width:auto;padding:4px 10px;border-radius:5px;gap:4px;">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M3 8a5 5 0 1 1 1 3.1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><polyline points="1,5 3,8 6,6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Replace audio
+          </button>
+        </div>
+      </div>
+    `;
+  } else {
+    panel.innerHTML = `
+      <div class="audio-panel-header">
+        <span class="audio-panel-title">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" style="opacity:0.7">
+            <path d="M9 19c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2v-1c0-1.1.9-2 2-2h2c1.1 0 2 .9 2 2v1zM21 16c0 1.1-.9 2-2 2h-2c-1.1 0-2-.9-2-2v-1c0-1.1.9-2 2-2h2c1.1 0 2 .9 2 2v1z" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M9 20V8l12-3v11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Audiobook
+        </span>
+        <button class="audio-panel-close">×</button>
+      </div>
+      <div class="audio-panel-body">
+        <div class="audio-no-file">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" style="opacity:0.3;margin-bottom:8px;">
+            <path d="M9 19c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2v-1c0-1.1.9-2 2-2h2c1.1 0 2 .9 2 2v1zM21 16c0 1.1-.9 2-2 2h-2c-1.1 0-2-.9-2-2v-1c0-1.1.9-2 2-2h2c1.1 0 2 .9 2 2v1z" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M9 20V8l12-3v11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <div style="font-size:13px;font-weight:600;color:var(--textMuted);margin-bottom:4px;">No TTS available yet</div>
+          <div style="font-size:11px;color:var(--textDim);margin-bottom:4px;line-height:1.55;">Text-to-speech is not yet implemented. You can upload an audiobook file to listen alongside the text.</div>
+          <div style="font-size:10px;color:var(--textDim);margin-bottom:12px;opacity:0.7;">.mp3 · .m4b · .wav · .ogg · .flac</div>
+          <button class="btn primary" id="apanel-upload" style="gap:6px;justify-content:center;">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 1v9M5 4l3-3 3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 12v2h12v-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            Upload audio file
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  document.body.appendChild(panel);
+
+  // Position below the audio button
+  const audioBtn = document.getElementById("btn-upload-audio");
+  if (audioBtn) {
+    const rect = audioBtn.getBoundingClientRect();
+    panel.style.top = `${rect.bottom + 8}px`;
+    const panW = 280;
+    let left = rect.left + rect.width / 2 - panW / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - panW - 8));
+    panel.style.left = `${left}px`;
+  }
+
+  panel.querySelector(".audio-panel-close").onclick = () => removeAudioPanel();
+
+  if (hasAudio) {
+    panel.querySelector("#apanel-play").onclick = () => { toggleAudio(); removeAudioPanel(); showAudioPanel(); };
+    panel.querySelector("#apanel-skip-back").onclick = () => { player.currentTime = Math.max(0, player.currentTime - 30); removeAudioPanel(); showAudioPanel(); };
+    panel.querySelector("#apanel-skip-fwd").onclick = () => { player.currentTime = Math.min(player.duration || 0, player.currentTime + 30); removeAudioPanel(); showAudioPanel(); };
+    panel.querySelector("#apanel-replace").onclick = () => { removeAudioPanel(); document.getElementById("audio-input").click(); };
+    const seekEl = panel.querySelector(".audio-seek");
+    if (seekEl) {
+      seekEl.oninput = (e) => {
+        player.currentTime = parseInt(e.target.value);
+        const fill = panel.querySelector(".audio-progress-fill");
+        const dur = player.duration || 1;
+        if (fill) fill.style.width = ((parseInt(e.target.value) / dur) * 100) + "%";
+        const cur = panel.querySelector(".audio-time-cur");
+        if (cur) cur.textContent = (() => { const s = parseInt(e.target.value); return `${Math.floor(s/60)}:${(s%60).toString().padStart(2,"0")}`; })();
+      };
+    }
+  } else {
+    panel.querySelector("#apanel-upload")?.addEventListener("click", () => { removeAudioPanel(); document.getElementById("audio-input").click(); });
+  }
 }
 
 async function handleAudioUpload(e) {
@@ -2024,9 +2603,17 @@ function switchModalTab(tabId) {
         </div>
         <svg class="gutenberg-btn-arrow" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7h8M8 4l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </a>
+      <a href="https://librivox.org" target="_blank" class="gutenberg-btn" style="margin-top:8px;">
+        <span class="gutenberg-btn-icon">🎧</span>
+        <div class="gutenberg-btn-text">
+          <div class="title">LibriVox</div>
+          <div class="sub">Free public domain audiobooks — 20,000+ titles</div>
+        </div>
+        <svg class="gutenberg-btn-arrow" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7h8M8 4l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
 
       <div class="section-label" style="margin-top:18px;">LIBRARY DATA</div>
-      <p style="font-size:13px; color:var(--textMuted); margin-bottom:14px; line-height:1.6;">Export your library as <strong>biblio-library.json</strong> to back it up.</p>
+      <p style="font-size:13px; color:var(--textMuted); margin-bottom:14px; line-height:1.6;">Export your library as <strong>gnos-library.json</strong> to back it up.</p>
       <div style="display:flex; gap:10px; margin-bottom:18px;">
         <button id="btn-export-lib" class="btn secondary" style="flex:1; justify-content:center;">↓ Export</button>
         <button id="btn-import-lib" class="btn primary" style="flex:1; justify-content:center;">↑ Import</button>
@@ -2046,9 +2633,9 @@ function switchModalTab(tabId) {
     `;
 
     body.querySelector("#btn-export-lib").onclick = () => {
-      const blob = new Blob([JSON.stringify({ _readme: "Biblio Library", books: state.library }, null, 2)], { type: "application/json" });
+      const blob = new Blob([JSON.stringify({ _readme: "Gnos Library", books: state.library }, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
-      Object.assign(document.createElement("a"), { href: url, download: "biblio-library.json" }).click();
+      Object.assign(document.createElement("a"), { href: url, download: "gnos-library.json" }).click();
       URL.revokeObjectURL(url);
     };
     body.querySelector("#btn-import-lib").onclick = () => document.getElementById("lib-import-input").click();
@@ -2122,13 +2709,13 @@ function switchModalTab(tabId) {
     body.innerHTML = `
       <div class="section-label">AI ASSISTANT</div>
       <p style="font-size:12px; color:var(--textMuted); margin-bottom:16px; line-height:1.6;">
-        Connect a local Ollama instance for text summarization. If no Ollama server is configured, a free AI summarization API will be used as a fallback.
+        Connect a local Ollama instance for AI-powered text summarization. Configure the server URL and model name below.
       </p>
       <label style="display:block; margin-bottom:14px; font-size:12px;">
         <div style="margin-bottom:5px; font-weight:600; color:var(--text);">Ollama Server URL</div>
         <input id="ollama-url-input" type="text" placeholder="http://localhost:11434" value="${ollamaUrl}"
           style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:6px; padding:8px 10px; font-size:12px; outline:none; font-family:inherit;">
-        <div style="font-size:11px; color:var(--textDim); margin-top:4px;">Leave blank to use free summarization API</div>
+        <div style="font-size:11px; color:var(--textDim); margin-top:4px;">Required to enable AI summarization</div>
       </label>
       <label style="display:block; margin-bottom:14px; font-size:12px;">
         <div style="margin-bottom:5px; font-weight:600; color:var(--text);">Model Name</div>
@@ -2144,21 +2731,23 @@ function switchModalTab(tabId) {
       <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--borderSubtle);">
         <div class="section-label">CURRENT AI SOURCE</div>
         <div style="font-size:12px; color:var(--textMuted); padding:10px 12px; background:var(--surfaceAlt); border-radius:7px; border:1px solid var(--border);">
-          ${ollamaUrl ? `✦ Ollama at <strong style="color:var(--accent);">${ollamaUrl}</strong>${ollamaModel ? ` using <strong>${ollamaModel}</strong>` : ""}` : "✦ Free AI summarization API (default)"}
+          ${ollamaUrl 
+            ? `<span style="color:#3fb950;">●</span> Ollama at <strong style="color:var(--accent);">${ollamaUrl}</strong>${ollamaModel ? ` using <strong>${ollamaModel}</strong>` : " (no model set)"}` 
+            : `<span style="color:#f85149;">○</span> <strong style="color:var(--textMuted);">No local LLM loaded.</strong> Configure an Ollama server above to enable AI summarization.`}
         </div>
       </div>
     `;
     body.querySelector("#btn-save-ai").onclick = () => {
-      state.ollamaUrl = body.querySelector("#ollama-url-input").value.trim().replace(/\/$/, "");
+      const rawUrl = body.querySelector("#ollama-url-input").value.trim().replace(/\/$/, "");
+      state.ollamaUrl = rawUrl || "http://localhost:11434";
       state.ollamaModel = body.querySelector("#ollama-model-input").value.trim();
       savePreferences();
       switchModalTab("ai");
     };
     body.querySelector("#btn-test-ai").onclick = async () => {
       const resultEl = body.querySelector("#ai-test-result");
-      const url = body.querySelector("#ollama-url-input").value.trim().replace(/\/$/, "");
+      const url = (body.querySelector("#ollama-url-input").value.trim() || "http://localhost:11434").replace(/\/$/, "");
       const model = body.querySelector("#ollama-model-input").value.trim() || "llama3";
-      if (!url) { resultEl.textContent = "⚠ Enter an Ollama URL to test."; resultEl.style.color = "var(--textDim)"; return; }
       resultEl.textContent = "Testing connection…"; resultEl.style.color = "var(--textDim)";
       try {
         const r = await fetch(`${url}/api/generate`, {
@@ -2303,11 +2892,11 @@ function openNotesViewer() {
             <div class="note-item-quote">"${n.quote.slice(0,80)}${n.quote.length>80?"…":""}"</div>
             <div class="note-item-text">${n.text}</div>
             <div class="note-item-meta">
-              <span>${new Date(n.createdAt).toLocaleDateString()}</span>
               <div style="display:flex;gap:8px;align-items:center;">
-                <button class="note-item-jump" data-page="${n.page}" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:11px;padding:0;">Jump to page ${n.page + 1}</button>
-                <button class="note-item-delete" data-id="${n.id}">Delete</button>
+                <button class="note-item-jump" data-page="${n.page}" data-quote="${n.quote.slice(0,80).replace(/"/g,'&quot;')}" title="Go to page ${n.page + 1}">(${n.page + 1})</button>
+                <span>${new Date(n.createdAt).toLocaleDateString()}</span>
               </div>
+              <button class="note-item-delete" data-id="${n.id}">Delete</button>
             </div>
           </div>
         `).join("")}
@@ -2328,10 +2917,58 @@ function openNotesViewer() {
   panel.querySelectorAll(".note-item-jump").forEach(btn => {
     btn.onclick = () => {
       const page = parseInt(btn.dataset.page, 10);
+      const quote = btn.dataset.quote || "";
       if (!isNaN(page) && page >= 0 && page < state.pages.length) {
         state.currentPage = page;
         updateProgress(page);
         removeNotePanel();
+        // After rendering, highlight the quoted text with a persistent <mark>
+        if (quote) {
+          setTimeout(() => {
+            try {
+              const card = document.getElementById("reader-card");
+              if (!card) return;
+              // Remove any previous note highlights
+              card.querySelectorAll("mark.reader-note-highlight").forEach(m => {
+                const parent = m.parentNode;
+                while (m.firstChild) parent.insertBefore(m.firstChild, m);
+                parent.removeChild(m);
+              });
+              const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT);
+              let node;
+              const ql = quote.toLowerCase();
+              const searchSnippet = ql.slice(0, 40);
+              while ((node = walker.nextNode())) {
+                const idx = node.textContent.toLowerCase().indexOf(searchSnippet);
+                if (idx !== -1) {
+                  // Wrap matched text in a <mark> for persistent visual highlight
+                  const matchLen = Math.min(quote.length, node.textContent.length - idx);
+                  const range = document.createRange();
+                  range.setStart(node, idx);
+                  range.setEnd(node, idx + matchLen);
+                  const mark = document.createElement("mark");
+                  mark.className = "reader-note-highlight";
+                  range.surroundContents(mark);
+                  // Scroll mark into view
+                  mark.scrollIntoView({ behavior: "smooth", block: "center" });
+                  // Fade highlight out after 3 seconds
+                  setTimeout(() => {
+                    mark.style.transition = "background 0.8s ease";
+                    mark.style.background = "transparent";
+                    setTimeout(() => {
+                      if (mark.parentNode) {
+                        const p = mark.parentNode;
+                        while (mark.firstChild) p.insertBefore(mark.firstChild, mark);
+                        p.removeChild(mark);
+                      }
+                    }, 900);
+                  }, 3000);
+                  break;
+                }
+              }
+            } catch(e) {}
+          }, 200);
+        }
       }
     };
   });
@@ -2347,6 +2984,7 @@ document.addEventListener("mousedown", (e) => {
   const ctxMenus = document.querySelectorAll(".context-menu");
 
   if (_wordPopupEl && !_wordPopupEl.contains(e.target) && !e.target.classList.contains("word")) removeWordPopup();
+  if (_audioPanelEl && !_audioPanelEl.contains(e.target) && e.target.id !== "btn-upload-audio" && !document.getElementById("btn-upload-audio")?.contains(e.target)) removeAudioPanel();
   if (_selToolbarEl && !_selToolbarEl.contains(e.target)) removeSelToolbar();
   if (_summaryPopupEl && !_summaryPopupEl.contains(e.target)) removeSummaryPopup();
   if (_notePanelEl && !_notePanelEl.contains(e.target) && e.target.id !== "btn-reader-notes") removeNotePanel();
@@ -2354,6 +2992,18 @@ document.addEventListener("mousedown", (e) => {
   if (drop && !drop.classList.contains("hidden") && !drop.contains(e.target) && !document.getElementById("btn-chapter-drop")?.contains(e.target)) drop.classList.add("hidden");
   if (searchDrop && !searchDrop.classList.contains("hidden") && !searchDrop.contains(e.target) && !document.getElementById("library-search")?.contains(e.target)) closeSearchDropdown();
   ctxMenus.forEach(m => { if (!m.classList.contains("hidden") && !m.contains(e.target)) m.classList.add("hidden"); });
+});
+
+// Debounced repagination on window resize
+let _resizeTimer = null;
+window.addEventListener("resize", () => {
+  if (state.view !== "reader") return;
+  clearTimeout(_resizeTimer);
+  _resizeTimer = setTimeout(async () => {
+    await repaginateCurrentBook();
+    renderPage();
+    updateReaderNav();
+  }, 300);
 });
 
 window.onload = initApp;

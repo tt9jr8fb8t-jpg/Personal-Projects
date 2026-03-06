@@ -1,39 +1,57 @@
-Take these files:
----
-**New features**
-Main page view: 
-- In the three dots dropdown add the option to summarize the book, this will either use the local llm or a quick search in with the format Summary of {book title, book author} in their search engine.
-Reader View:
-- When the audio icon is clicked, change it so that instead of files being pulled up add an audio playback system under the page that says there is no tts or audio playback downloaded if there is no tts or audioplayback detected.
-- Within a page where notes are added add a bookmark icon next to the beginning of the text where the note was made originally, it should responsively update in real-time and be within the margin instead of displacing the text.
-- Change the jump to page button to be in the {page #} format and have that number be a button where when clicked it takes you to the page, this should be directly to the left of the date the note was made, when clicked it should jump you to that page with the selected text highlighted.
-- When words are highlighted the user should be given the opption to highlight the words, summarize, add note, or play audio.
-Settings:
-- Add a times read listing next to the amount of pages read within the most read books section.
+Take these files (Index.html, Script.js, styles.css) and perform a comprehensive refactor to transition the reader from a manual JavaScript measurement system to a CSS Multi-column Layout. Implement the following changes and bug fixes:
 
----
-Bugs and Issues:
-Main Page View:
-- If the reader has no audiobooks downloaded show that along with the audio files that are accepted in the audiobooks tab.
-Reader View:
-- Make the settings in the reader view update quicker as sometimes they require the user to change pages in order to update.
-Specifcally:
-   - Two page spread
-   - highlight word on hover
-   - underline current line
-- Fix the way that the Underline Current Line feature works so that it more accurately detects the line the user is on.
-- Fix how the user looks up page numbers in the chapter search bar, it should show along with chapter search options just underneath.
-ex. Search = 68
-   - Result -> Chapter 68
-   - Result -> Page 68
-- Refer to a more accurate translator as it's translations are often wrong or irrelevant keep the context window.
-- **Biggest Issues** Fix the way pages are rendered with words within the page viewport to dynamically adjust the amount of pages so that no words are clipping through the bottom and all pages are consistent in size. This should be quick in realtime so there is no lag when changing font sizes.
-Settings:
-- When no llm is loaded say that no llm is loaded
-- When reloading the folder check for any duplicate epub files or title names so as to not duplicate books that are already loaded.
+1. The Core Refactor: CSS Multi-column Pagination
+
+The Problem: The current splitBlocksIntoPages function manually measures text height, causing clipping and "two versions" of pages.
+
+The Task: * Replace the manual measurement loop. Instead, render each chapter into a single container (#reader-content).
+
+Apply CSS to this container: column-width: 100%;, column-gap: 40px;, and height: 100%;.
+
+Navigation: Instead of swapping DOM elements to change pages, use transform: translateX() on the content container to "slide" between the columns.
+
+Logic: Update the navigation logic to calculate the total number of columns based on the container's scrollWidth divided by its clientWidth.
+
+2. Standalone Audiobook Support
+
+The Problem: The "Audiobooks" tab is empty because audio must be manually attached to text books.
+
+The Task: * Modify the file upload handler in Script.js to accept .mp3, .m4a, and .wav files.
+
+When an audio file is uploaded, create a new book object in the library with hasAudio: true and isAudioOnly: true. Use the filename as the title.
+
+Ensure these appear in the "Audiobooks" tab of the library view immediately.
+
+3. Reader View Enhancements
+
+Page Dimensions: In styles.css, increase the height of the .reader-card (or the main reader container) to make the pages taller.
+
+Search Functionality: Update the search input in the chapter/page dropdown. If a user inputs a number, it should filter the results to show both "Chapter [Number]" and "Page [Number]".
+
+Page Selector Styling: Re-style the page number input/textbox in the reader footer. Remove the standard input borders; make it seamless, centered, and styled with the same background/text colors as the reader's UI theme.
+
+Notes Jump Button: * Change the button text format from (Page #) to page # (e.g., page 13).
+
+When clicked, the "Jump" function should not only navigate to the page but also apply a temporary CSS class (e.g., .active-jump-highlight) to the quoted text so it appears underlined or highlighted, as if the user were hovering over it.
+
+4. General UI & Bug Fixes
+
+Favicon: Replace the existing favicon link in Index.html with a book icon. You can use a Data URI or an SVG path of a book for this.
+
+Cleanup: Remove the splitBlocksIntoPages function and any logic that relies on the hidden "host" element for measuring text height, as it is no longer needed with the CSS Column approach.
+
+Technical Constraint: Do not change the core state management of the app (the state object). Ensure that the "Chapter Title" pages (the ones that are currently centered) still appear as their own isolated pages using the break-after: column; CSS property.
+
+
+
 
 Maybe add these options later (More complex):
 - Custom "Libraries" so that users can organize their books better either by genre or by tags or other custom options.
 - Porting over books from other apps.
 - Log-in and authentication.
+- Syncing audiobook progress to the pages of the book. 
 - TTS integration for the text that can begin from specifc words when clicked on.
+
+
+For porting to tauri:
+Help me get through the process of formatting this to work with Tauri after my fixes have been made
