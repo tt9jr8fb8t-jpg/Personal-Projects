@@ -106,6 +106,7 @@ const state = {
   sessionStart: null,
   sessionBookId: null,
   notes: {},
+  notebooks: [],
 };
 
 // ============================================================================
@@ -379,6 +380,7 @@ function blocksToHTML(blocks) {
   return blocks.map(b => {
     if (!b?.text?.trim() && b?.type !== "cover") return "";
     if (b.type === "cover")      return `<img src="${b.src}" alt="Book cover">`;
+    if (b.type === "pdfPage")    return `<img src="${b.src}" alt="" class="pdf-page-img">`;
     if (b.type === "heading")    return `<h2>${b.text}</h2>`;
     if (b.type === "subheading") return `<h3>${b.text}</h3>`;
     return `<p>${b.text}</p>`;
@@ -389,6 +391,7 @@ function blocksToDisplayHTML(blocks) {
   return blocks.map(b => {
     if (!b?.text?.trim() && b?.type !== "cover") return "";
     if (b.type === "cover")      return `<img src="${b.src}" alt="Book cover">`;
+    if (b.type === "pdfPage")    return `<img src="${b.src}" alt="" class="pdf-page-img">`;
     if (b.type === "heading")    return `<h2>${b.text}</h2>`;
     if (b.type === "subheading") return `<h3>${b.text}</h3>`;
     const wrapped = b.text.replace(/(\S+)/g, (w) => {
@@ -509,7 +512,7 @@ function computePageBreaks(chapterIdx) {
   // recompute, doubling the page count each time settings change.
   const expanded = [];
   for (const b of chapter.blocks) {
-    if (!b?.text?.trim() && b?.type !== "cover") continue;
+    if (!b?.text?.trim() && b?.type !== "cover" && b?.type !== "pdfPage") continue;
     expanded.push({ ...b }); // shallow copy so splice/mutation never touches originals
   }
 
@@ -652,10 +655,12 @@ function renderPage(chapterIdx, pageIdx, animate) {
     // then clips exactly at the right boundary.
     div.style.height = card.offsetHeight + "px";
     div.innerHTML = blocksToDisplayHTML(blocks);
-    const nonEmpty = blocks.filter(b => b?.text?.trim() || b?.type === "cover");
+    const nonEmpty = blocks.filter(b => b?.text?.trim() || b?.type === "cover" || b?.type === "pdfPage");
     if (nonEmpty.length > 0) {
       if (nonEmpty.every(b => b.type === "cover")) {
         div.classList.add("cover-page");
+      } else if (nonEmpty.every(b => b.type === "pdfPage")) {
+        div.classList.add("cover-page", "pdf-fill-page");
       } else if (nonEmpty.every(b => b.type === "heading" || b.type === "subheading")) {
         div.classList.add("chapter-title-page");
       }
@@ -1257,6 +1262,9 @@ async function initApp() {
   const notesData = await window.storage.get("reader_notes");
   if (notesData) { try { state.notes = JSON.parse(notesData.value); } catch {} }
 
+  const nbMeta = await window.storage.get("notebooks_meta");
+  if (nbMeta) { try { state.notebooks = JSON.parse(nbMeta.value); } catch {} }
+
   initSelectionToolbar();
 
   const searchInput = document.getElementById("library-search");
@@ -1284,10 +1292,32 @@ async function initApp() {
     }
   });
 
-  document.getElementById("btn-add-book").onclick = () => document.getElementById("file-input").click();
+  document.getElementById("btn-add-book").onclick = (e) => {
+    e.stopPropagation();
+    const popup = document.getElementById("add-choice-popup");
+    const btn   = document.getElementById("btn-add-book");
+    const rect  = btn.getBoundingClientRect();
+    popup.style.top  = `${rect.bottom + 8}px`;
+    popup.style.left = `${Math.min(rect.left, window.innerWidth - 230)}px`;
+    popup.classList.toggle("hidden");
+  };
+  document.getElementById("choice-add-book").onclick = () => {
+    document.getElementById("add-choice-popup").classList.add("hidden");
+    document.getElementById("file-input").click();
+  };
+  document.getElementById("choice-new-notebook").onclick = () => {
+    document.getElementById("add-choice-popup").classList.add("hidden");
+    createNewNotebook();
+  };
+  document.addEventListener("click", (e) => {
+    const popup = document.getElementById("add-choice-popup");
+    if (!popup?.classList.contains("hidden") && !popup.contains(e.target) && e.target.id !== "btn-add-book")
+      popup.classList.add("hidden");
+  });
   document.getElementById("btn-settings").onclick = () => openModal("settings-modal");
   document.getElementById("btn-close-settings").onclick = () => closeModal("settings-modal");
   document.getElementById("btn-exit-reader").onclick = exitReader;
+  document.getElementById("btn-exit-notebook").onclick = exitNotebook;
   document.getElementById("btn-profile").onclick = openProfile;
   document.getElementById("btn-close-profile").onclick = () => closeModal("profile-modal");
 
@@ -1300,6 +1330,7 @@ async function initApp() {
   document.querySelectorAll(".lib-tab").forEach(t => t.onclick = (e) => {
     const tab = e.target.dataset.libtab;
     state.activeLibTab = tab;
+    if (tab === "notebooks") renderNotebooks();
     document.querySelectorAll(".lib-tab").forEach(x => x.classList.toggle("active", x.dataset.libtab === tab));
     document.querySelectorAll(".lib-tab-panel").forEach(p => {
       p.classList.toggle("active", p.id === `tab-${tab}`);
@@ -2474,10 +2505,8 @@ function handleWordMouseover(e) {
 // Bookmark icons for notes on current chapter/page
 function addBookmarkIcons(card) {
   if (!state.activeBook || !state.notes) return;
-  // Clear all existing markers first (handles deletions + re-renders)
   card.querySelectorAll(".note-marked-para").forEach(p => {
-    p.classList.remove("note-marked-para");
-    p.removeAttribute("title");
+    p.classList.remove("note-marked-para"); p.removeAttribute("title");
   });
   const notes = state.notes[state.activeBook.id] || [];
   const pageNotes = notes.filter(n => n.chapter === state.currentChapter);
@@ -2551,6 +2580,309 @@ async function resetBookProgress(id) {
   saveLibrary(); renderLibrary();
 }
 
+// ============================================================================
+// PDF PARSER
+// ============================================================================
+async function parsePdf(file) {
+  if (typeof pdfjsLib === "undefined") throw new Error("PDF.js not loaded");
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+  const offscreen = document.createElement("canvas");
+
+  async function renderPage(pageNum, scale) {
+    const page = await pdf.getPage(pageNum);
+    const vp   = page.getViewport({ scale });
+    offscreen.width  = vp.width;
+    offscreen.height = vp.height;
+    const ctx = offscreen.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, vp.width, vp.height);
+    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+    return offscreen.toDataURL("image/jpeg", 0.85);
+  }
+
+  // Cover thumbnail: page 1 at scale 1.5 (good quality for the grid card)
+  let coverDataUrl = null;
+  try { coverDataUrl = await renderPage(1, 1.5); } catch {}
+
+  // Render every page at scale 1.5 → each page is one "chapter" with a pdfPage block
+  // 1.5× on a 612pt-wide PDF → 918px wide, JPEG85 ≈ 60-100 KB per page
+  const chapters = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    try {
+      const src = await renderPage(i, 1.5);
+      chapters.push({
+        title: `Page ${i}`,
+        blocks: [{ type: "pdfPage", src, text: "" }]
+      });
+    } catch {}
+  }
+
+  if (!chapters.length) throw new Error("No pages could be rendered from this PDF");
+  return { chapters, coverDataUrl };
+}
+
+// ============================================================================
+// NOTEBOOKS
+// ============================================================================
+let _activeNotebook = null;
+let _nbSaveTimer    = null;
+
+async function saveNotebooksMeta() {
+  await window.storage.set("notebooks_meta", JSON.stringify(
+    state.notebooks.map(({ id, title, createdAt, updatedAt, wordCount, coverDataUrl, coverColor }) =>
+      ({ id, title, createdAt, updatedAt, wordCount, coverDataUrl, coverColor }))
+  ));
+}
+
+async function saveNotebookContent(id, content) {
+  await window.storage.set(`notebook_${id}`, content);
+}
+
+async function loadNotebookContent(id) {
+  const res = await window.storage.get(`notebook_${id}`);
+  return res ? res.value : "";
+}
+
+function createNewNotebook() {
+  state.activeLibTab = "notebooks";
+  document.querySelectorAll(".lib-tab").forEach(x =>
+    x.classList.toggle("active", x.dataset.libtab === "notebooks"));
+  document.querySelectorAll(".lib-tab-panel").forEach(p => {
+    const show = p.id === "tab-notebooks";
+    p.classList.toggle("active", show); p.classList.toggle("hidden", !show);
+  });
+  const id = `nb_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
+  const _nbColors = ["#c62828","#1565c0","#2e7d32","#4a148c","#e65100","#00695c","#37474f","#6a1520"];
+  const nb = { id, title: "Untitled", content: "",
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), wordCount: 0,
+    coverColor: _nbColors[Math.floor(Math.random()*_nbColors.length)] };
+  state.notebooks.unshift(nb);
+  saveNotebooksMeta();
+  saveNotebookContent(id, "");
+  renderNotebooks();
+  openNotebook(nb);
+}
+
+function renderNotebooks() {
+  const grid  = document.getElementById("notebook-grid");
+  const empty = document.getElementById("notebook-empty-state");
+  if (!grid) return;
+  grid.innerHTML = "";
+  if (!state.notebooks.length) { empty?.classList.remove("hidden"); return; }
+  empty?.classList.add("hidden");
+  state.notebooks.forEach(nb => {
+    const el = document.createElement("div");
+    el.className = "book-card-container notebook-card";
+    el.innerHTML = `
+      <div class="notebook-cover" style="--nb-color:${nb.coverColor||'#c62828'}">
+        ${nb.coverDataUrl
+          ? `<img src="${nb.coverDataUrl}" alt="" class="nb-custom-cover">`
+          : `<div class="nb-comp-cover">
+              <div class="nb-comp-binding"></div>
+              <div class="nb-comp-label">
+                <div class="nb-comp-label-title">${nb.title}</div>
+              </div>
+              <div class="nb-comp-texture"></div>
+            </div>`}
+      </div>
+      <div class="book-meta">
+        <div class="meta-text">
+          <div class="meta-title">${nb.title}</div>
+          <div class="meta-author">${nb.wordCount || 0} words · ${new Date(nb.updatedAt).toLocaleDateString()}</div>
+        </div>
+        <button class="btn-dots">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="13" cy="8" r="1.5"/></svg>
+        </button>
+      </div>
+      <div class="context-menu hidden">
+        <button class="ctx-item nb-cover-btn">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.4"/><circle cx="5.5" cy="5.5" r="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M1 11l4-4 3 3 2-2 5 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Change cover
+        </button>
+        <button class="ctx-item nb-delete-btn danger">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 4h12M6 4V2h4v2M5 4l1 9h4l1-9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Delete notebook
+        </button>
+      </div>`;
+    el.querySelector(".notebook-cover").onclick = () => openNotebook(nb);
+    const menu = el.querySelector(".context-menu");
+    el.querySelector(".btn-dots").onclick = (e) => {
+      e.stopPropagation();
+      document.querySelectorAll(".context-menu").forEach(m => { if (m !== menu) m.classList.add("hidden"); });
+      menu.classList.toggle("hidden");
+    };
+    el.querySelector(".nb-cover-btn")?.addEventListener("click", (e) => {
+      e.stopPropagation(); menu.classList.add("hidden");
+      const inp = document.createElement("input");
+      inp.type = "file"; inp.accept = "image/*";
+      inp.onchange = async () => {
+        const file = inp.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async (ev) => {
+          nb.coverDataUrl = ev.target.result;
+          const idx = state.notebooks.findIndex(n => n.id === nb.id);
+          if (idx !== -1) state.notebooks[idx] = nb;
+          await saveNotebooksMeta();
+          renderNotebooks();
+        };
+        reader.readAsDataURL(file);
+      };
+      inp.click();
+    });
+    el.querySelector(".nb-delete-btn").onclick = async (e) => {
+      e.stopPropagation();
+      state.notebooks = state.notebooks.filter(n => n.id !== nb.id);
+      await saveNotebooksMeta(); await window.storage.delete(`notebook_${nb.id}`);
+      renderNotebooks();
+    };
+    grid.appendChild(el);
+  });
+}
+
+async function openNotebook(nb) {
+  _activeNotebook = nb;
+  switchView("notebook");
+
+  const content  = await loadNotebookContent(nb.id);
+  nb.content     = content;
+
+  const titleInput = document.getElementById("notebook-title-input");
+  const textarea   = document.getElementById("notebook-textarea");
+  const preview    = document.getElementById("notebook-preview");
+  const status     = document.getElementById("notebook-save-status");
+  const panes      = document.getElementById("notebook-panes");
+
+  titleInput.value = nb.title;
+  textarea.value   = content;
+
+  // Live mode: both panes visible at all times — source left, rendered right.
+  // "preview mode" (focus) hides the source pane so only rendered is visible.
+  panes.classList.remove("preview-mode");
+  textarea.classList.remove("hidden");
+  preview.classList.remove("hidden");
+
+  function renderMarkdown(src) {
+    if (typeof marked === "undefined") return `<pre>${src}</pre>`;
+    // Resolve [[wikilinks]] before marked
+    const resolved = src.replace(/\[\[([^\]]+)\]\]/g, (_, target) => {
+      const nb2 = state.notebooks.find(n => n.title.toLowerCase() === target.toLowerCase());
+      const bk  = state.library.find(b => b.title.toLowerCase() === target.toLowerCase());
+      if (nb2)  return `<a href="#" class="wikilink wikilink-nb"  data-nbid="${nb2.id}">${target}</a>`;
+      if (bk)   return `<a href="#" class="wikilink wikilink-book" data-bookid="${bk.id}">${target}</a>`;
+      return `<span class="wikilink wikilink-unresolved">[[${target}]]</span>`;
+    });
+    return marked.parse(resolved);
+  }
+
+  function updatePreview() {
+    preview.innerHTML = renderMarkdown(textarea.value || "*Start writing…*");
+    // Wire wikilink clicks
+    preview.querySelectorAll(".wikilink-nb").forEach(a => {
+      a.onclick = (e) => { e.preventDefault(); const nb2 = state.notebooks.find(n => n.id===a.dataset.nbid); if (nb2) openNotebook(nb2); };
+    });
+    preview.querySelectorAll(".wikilink-book").forEach(a => {
+      a.onclick = (e) => { e.preventDefault(); const bk = state.library.find(b => b.id===a.dataset.bookid); if (bk) openBook(bk); };
+    });
+  }
+
+  // Render immediately on open
+  updatePreview();
+
+  function scheduleSave() {
+    status.textContent = "Unsaved";
+    clearTimeout(_nbSaveTimer);
+    _nbSaveTimer = setTimeout(async () => {
+      nb.updatedAt = new Date().toISOString();
+      nb.wordCount = textarea.value.trim().split(/\s+/).filter(Boolean).length;
+      nb.content   = textarea.value;
+      const idx = state.notebooks.findIndex(n => n.id === nb.id);
+      if (idx !== -1) state.notebooks[idx] = nb;
+      await saveNotebookContent(nb.id, textarea.value);
+      await saveNotebooksMeta();
+      status.textContent = "Saved";
+      renderNotebooks();
+    }, 1200);
+  }
+
+  titleInput.oninput = () => { nb.title = titleInput.value || "Untitled"; scheduleSave(); };
+  textarea.oninput   = () => { scheduleSave(); updatePreview(); };
+  // Sync scroll between panes
+  textarea.onscroll  = () => {
+    const ratio = textarea.scrollTop / (textarea.scrollHeight - textarea.clientHeight || 1);
+    preview.scrollTop = ratio * (preview.scrollHeight - preview.clientHeight);
+  };
+
+  // Toggle focus mode (source hidden, preview fills width)
+  document.getElementById("btn-notebook-mode").onclick = () => {
+    const focused = panes.classList.toggle("preview-mode");
+    textarea.classList.toggle("hidden", focused);
+  };
+
+  document.getElementById("notebook-toolbar").querySelectorAll(".nb-tool-btn").forEach(btn => {
+    btn.onclick = () => {
+      const action = btn.dataset.action;
+      const s = textarea.selectionStart, e = textarea.selectionEnd;
+      const sel = textarea.value.slice(s, e);
+      const wrap = (pre, suf) => {
+        suf = suf ?? pre;
+        const rep = `${pre}${sel||"text"}${suf}`;
+        textarea.value = textarea.value.slice(0,s)+rep+textarea.value.slice(e);
+        textarea.focus(); textarea.setSelectionRange(s+pre.length, s+pre.length+(sel||"text").length);
+        scheduleSave();
+      };
+      const prepend = (pre) => {
+        const ls = textarea.value.lastIndexOf("\n", s-1)+1;
+        textarea.value = textarea.value.slice(0,ls)+pre+textarea.value.slice(ls);
+        textarea.focus(); scheduleSave();
+      };
+      if      (action==="bold")   wrap("**");
+      else if (action==="italic") wrap("_");
+      else if (action==="code")   wrap("`");
+      else if (action==="h1")     prepend("# ");
+      else if (action==="h2")     prepend("## ");
+      else if (action==="ul")     prepend("- ");
+      else if (action==="hr")     { textarea.value=textarea.value.slice(0,e)+"\n\n---\n\n"+textarea.value.slice(e); textarea.focus(); scheduleSave(); }
+      else if (action==="link")   wrap("[","](url)");
+      else if (action==="wiki")   wrap("[[","]]");
+    };
+  });
+
+  textarea.onkeydown = (e) => {
+    if ((e.ctrlKey||e.metaKey)&&e.key==="b") { e.preventDefault(); document.querySelector('[data-action="bold"]')?.click(); }
+    if ((e.ctrlKey||e.metaKey)&&e.key==="i") { e.preventDefault(); document.querySelector('[data-action="italic"]')?.click(); }
+    if (e.key==="Tab") { e.preventDefault(); const p=textarea.selectionStart; textarea.value=textarea.value.slice(0,p)+"  "+textarea.value.slice(p); textarea.selectionStart=textarea.selectionEnd=p+2; }
+  };
+
+  document.getElementById("btn-notebook-delete").onclick = async () => {
+    if (!confirm(`Delete "${nb.title}"?`)) return;
+    state.notebooks = state.notebooks.filter(n => n.id !== nb.id);
+    await saveNotebooksMeta(); await window.storage.delete(`notebook_${nb.id}`);
+    renderNotebooks(); exitNotebook();
+  };
+}
+
+function exitNotebook() {
+  clearTimeout(_nbSaveTimer);
+  _activeNotebook = null;
+  switchView("library");
+  state.activeLibTab = "notebooks";
+  document.querySelectorAll(".lib-tab").forEach(x =>
+    x.classList.toggle("active", x.dataset.libtab === "notebooks"));
+  document.querySelectorAll(".lib-tab-panel").forEach(p => {
+    const show = p.id === "tab-notebooks";
+    p.classList.toggle("active", show); p.classList.toggle("hidden", !show);
+  });
+  renderNotebooks();
+}
+
+// ============================================================================
+// FILE UPLOAD HANDLERS
+// ============================================================================
 async function handleFileUpload(e) {
   const files = Array.from(e.target.files || []);
   if (!files.length) return;
@@ -2558,16 +2890,23 @@ async function handleFileUpload(e) {
   let successCount = 0;
 
   for (const file of files) {
-    if (file.name.startsWith(".") || (!/\.(txt|md|epub3?)$/i.test(file.name))) continue;
+    if (file.name.startsWith(".") || (!/\.(txt|md|epub3?|pdf)$/i.test(file.name))) continue;
 
     try {
       const isEpub = /\.epub3?$/i.test(file.name);
+      const isPdf  = /\.pdf$/i.test(file.name);
       let bookTitle, bookAuthor="", chapters, format, coverDataUrl=null;
 
       if (isEpub) {
         format = "epub";
         const parsed = await parseEpub(file);
         bookTitle = parsed.title; bookAuthor = parsed.author;
+        chapters = parsed.chapters;
+        coverDataUrl = parsed.coverDataUrl || null;
+      } else if (isPdf) {
+        format = "pdf";
+        const parsed = await parsePdf(file);
+        bookTitle = file.name.replace(/\.pdf$/i,"").replace(/[_-]/g," ");
         chapters = parsed.chapters;
         coverDataUrl = parsed.coverDataUrl || null;
       } else {
@@ -2614,7 +2953,7 @@ async function handleFolderSelect(e) {
   showToast(true, `Loading ${state.connectedFolder.fileCount} files from "${folderName}"...`);
 
   for (const file of files) {
-    if (file.name.startsWith(".") || (!/\.(txt|md|epub3?)$/i.test(file.name))) continue;
+    if (file.name.startsWith(".") || (!/\.(txt|md|epub3?|pdf)$/i.test(file.name))) continue;
     const derivedTitle = file.name.replace(/\.(txt|md|epub3?)$/i,"").replace(/[_-]/g," ").toLowerCase().trim();
     const alreadyAdded = state.library.some(b =>
       b.title.toLowerCase().trim() === derivedTitle ||
@@ -2624,11 +2963,18 @@ async function handleFolderSelect(e) {
 
     try {
       const isEpub = /\.epub3?$/i.test(file.name);
+      const isPdf  = /\.pdf$/i.test(file.name);
       let bookTitle, bookAuthor="", chapters, format, coverDataUrl=null;
       if (isEpub) {
         format = "epub";
         const parsed = await parseEpub(file);
         bookTitle = parsed.title; bookAuthor = parsed.author;
+        chapters = parsed.chapters;
+        coverDataUrl = parsed.coverDataUrl || null;
+      } else if (isPdf) {
+        format = "pdf";
+        const parsed = await parsePdf(file);
+        bookTitle = file.name.replace(/\.pdf$/i,"").replace(/[_-]/g," ");
         chapters = parsed.chapters;
         coverDataUrl = parsed.coverDataUrl || null;
       } else {
@@ -3163,8 +3509,8 @@ function openNotesViewer() {
             <div class="note-item-text">${n.text}</div>
             <div class="note-item-meta">
               <span>${new Date(n.createdAt).toLocaleDateString()}</span>
-              <div style="display:flex;gap:8px;align-items:center;">
-                <button class="note-item-jump" data-chapter="${n.chapter ?? 0}" data-page="${n.page ?? 0}" title="Jump to passage">Go to passage</button>
+              <div style="display:flex;gap:10px;align-items:center;">
+                <button class="note-item-jump" data-chapter="${n.chapter ?? 0}" data-page="${n.page ?? 0}">Go to page</button>
                 <button class="note-item-delete" data-id="${n.id}">Delete</button>
               </div>
             </div>
@@ -3181,7 +3527,6 @@ function openNotesViewer() {
         state.notes[state.activeBook.id] = state.notes[state.activeBook.id].filter(n => n.id !== id);
         window.storage.set("reader_notes", JSON.stringify(state.notes));
       }
-      // Refresh bookmark icons on the live reader card
       const card = document.getElementById("reader-card");
       if (card) addBookmarkIcons(card);
       removeNotesViewer();

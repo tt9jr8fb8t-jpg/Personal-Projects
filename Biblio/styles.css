@@ -537,6 +537,14 @@ button { font-family: inherit; }
 .progress-bar { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accentSecondary)); border-radius: 2px; transition: width 0.3s; width: 0%; }
 #chapter-progress-info { display: none; }
 
+/* PDF page images in reader */
+.pdf-fill-page { padding: 0 !important; overflow: hidden !important; }
+.pdf-fill-page .pdf-page-img {
+  width: 100% !important; height: 100% !important;
+  object-fit: contain !important;
+  display: block; background: #fff;
+}
+
 /* Library drag-and-drop */
 .book-card-container[draggable="true"] { cursor: grab; }
 .book-card-container[draggable="true"]:active { cursor: grabbing; }
@@ -685,13 +693,13 @@ button { font-family: inherit; }
 .notes-scroll { flex: 1; overflow-y: auto; padding: 4px 0; }
 .note-item { padding: 10px 14px; border-bottom: 1px solid var(--borderSubtle); }
 .note-item:last-child { border-bottom: none; }
+.note-item-context { font-size: 10px; font-weight: 600; color: var(--textDim); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 3px; }
 .note-item-quote { font-size: 11px; color: var(--accent); font-style: italic; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .note-item-text { font-size: 12px; color: var(--text); line-height: 1.5; }
-.note-item-meta { font-size: 10px; color: var(--textDim); margin-top: 3px; display: flex; justify-content: space-between; }
+.note-item-meta { font-size: 10px; color: var(--textDim); margin-top: 6px; display: flex; justify-content: space-between; align-items: center; }
 .note-item-delete { background: none; border: none; color: var(--textDim); cursor: pointer; font-size: 11px; padding: 0; }
 .note-item-delete:hover { color: #f85149; }
 
-/* Annotated paragraph — left accent border, no absolute positioning */
 .note-marked-para {
   border-left: 3px solid var(--accent) !important;
   padding-left: 10px !important;
@@ -699,28 +707,11 @@ button { font-family: inherit; }
 }
 .note-marked-para:hover { border-left-color: var(--accentSecondary) !important; }
 
-/* Chapter context label above quote in notes viewer */
-.note-item-context {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--textDim);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: 3px;
-}
-
 /* Note jump link — styled as {pg#} badge */
 .note-item-jump {
-  background: none;
-  border: none;
-  color: var(--accent);
-  cursor: pointer;
-  font-size: 11px;
-  font-family: var(--font-ui);
-  padding: 0;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  opacity: 0.8;
+  background: none; border: none; color: var(--accent);
+  cursor: pointer; font-size: 11px; font-family: var(--font-ui);
+  padding: 0; text-decoration: underline; text-underline-offset: 2px; opacity: 0.8;
   transition: opacity 0.1s;
 }
 .note-item-jump:hover { opacity: 1; }
@@ -806,3 +797,183 @@ mark.reader-note-highlight {
 /* Chapter page-jump item special style */
 .chapter-item-page-jump { background: rgba(56,139,253,0.04); }
 .chapter-item-page-jump:hover { background: rgba(56,139,253,0.1); }
+/* === ADD CHOICE POPUP === */
+.add-choice-popup {
+  position: fixed; z-index: 800;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px; box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+  padding: 8px; display: flex; flex-direction: column; gap: 4px;
+  min-width: 200px; animation: toolbarPop 0.15s ease;
+}
+.add-choice-popup.hidden { display: none; }
+.add-choice-btn {
+  display: flex; flex-direction: column; align-items: flex-start;
+  gap: 2px; padding: 11px 14px; border-radius: 9px;
+  background: none; border: none; cursor: pointer; text-align: left;
+  color: var(--text); font-family: var(--font-ui); transition: background 0.12s;
+}
+.add-choice-btn:hover { background: var(--hover); }
+.add-choice-btn span { font-size: 13px; font-weight: 600; }
+.add-choice-btn small { font-size: 10px; color: var(--textDim); letter-spacing: 0.02em; }
+.add-choice-btn svg { color: var(--accent); margin-bottom: 4px; }
+
+/* === NOTEBOOK CARD === */
+.notebook-card .notebook-cover {
+  width: 148px; height: 210px; border-radius: 3px;
+  position: relative; overflow: hidden; cursor: pointer;
+  transition: transform 0.18s, box-shadow 0.18s;
+  box-shadow: 2px 3px 10px rgba(0,0,0,0.4);
+}
+.notebook-card .notebook-cover:hover { transform: translateY(-3px) rotate(-0.5deg); box-shadow: 4px 8px 24px rgba(0,0,0,0.5); }
+
+/* Custom image cover */
+.nb-custom-cover {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; display: block;
+}
+
+/* Composition notebook cover */
+.nb-comp-cover {
+  position: absolute; inset: 0;
+  background: var(--nb-color, #c62828);
+  display: flex; flex-direction: column;
+}
+/* Marbled texture overlay */
+.nb-comp-texture {
+  position: absolute; inset: 0; opacity: 0.12;
+  background-image:
+    repeating-linear-gradient(47deg, rgba(255,255,255,0.6) 0px, transparent 2px, transparent 8px),
+    repeating-linear-gradient(133deg, rgba(0,0,0,0.3) 0px, transparent 3px, transparent 12px);
+}
+/* Left binding strip */
+.nb-comp-binding {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 18px;
+  background: rgba(0,0,0,0.28);
+  box-shadow: inset -3px 0 6px rgba(0,0,0,0.2), 2px 0 0 rgba(255,255,255,0.08);
+}
+.nb-comp-binding::after {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background-image: repeating-linear-gradient(
+    to bottom, transparent, transparent 11px, rgba(255,255,255,0.07) 11px, rgba(255,255,255,0.07) 12px
+  );
+}
+/* White label area */
+.nb-comp-label {
+  position: absolute; left: 26px; right: 10px; top: 28px; bottom: 28px;
+  background: rgba(255,255,255,0.92);
+  border-radius: 2px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 12px 10px; box-sizing: border-box;
+  box-shadow: inset 0 1px 4px rgba(0,0,0,0.1);
+}
+/* Ruling lines inside label */
+.nb-comp-label::before {
+  content: '';
+  position: absolute; inset: 24px 8px 8px;
+  background-image: repeating-linear-gradient(
+    to bottom, transparent, transparent 15px,
+    rgba(150,180,255,0.5) 15px, rgba(150,180,255,0.5) 16px
+  );
+}
+/* Red top bar of label */
+.nb-comp-label::after {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 22px;
+  background: var(--nb-color, #c62828);
+  border-radius: 2px 2px 0 0;
+  opacity: 0.85;
+}
+.nb-comp-label-title {
+  position: relative; z-index: 1;
+  font-size: 11px; font-weight: 700; color: #222;
+  text-align: center; line-height: 1.3;
+  word-break: break-word; font-family: Georgia, serif;
+  max-width: 100%; margin-top: 8px;
+}
+
+/* === NOTEBOOK EDITOR VIEW === */
+.notebook-title-wrap {
+  flex: 1; display: flex; align-items: center;
+  max-width: 480px; min-width: 0;
+}
+.notebook-title-input {
+  background: none; border: none; outline: none;
+  font-size: 15px; font-weight: 600; color: var(--text);
+  font-family: var(--font-ui); width: 100%;
+  border-bottom: 1px solid transparent; transition: border-color 0.15s;
+}
+.notebook-title-input:focus { border-bottom-color: var(--accent); }
+.notebook-save-status {
+  font-size: 11px; color: var(--textDim); margin-right: 4px;
+  min-width: 48px; text-align: right;
+}
+.notebook-toolbar {
+  display: flex; align-items: center; gap: 2px;
+  padding: 5px 14px; border-bottom: 1px solid var(--borderSubtle);
+  background: var(--surface); flex-shrink: 0;
+}
+.nb-tool-btn {
+  background: none; border: none; color: var(--textDim);
+  cursor: pointer; border-radius: 6px; padding: 4px 8px;
+  font-size: 12px; font-family: var(--font-ui); line-height: 1;
+  transition: background 0.1s, color 0.1s;
+}
+.nb-tool-btn:hover { background: var(--hover); color: var(--text); }
+.nb-tool-sep { margin-left: 6px; }
+.notebook-panes {
+  flex: 1; display: flex; overflow: hidden;
+  border-top: 1px solid var(--borderSubtle);
+}
+/* Divider between source and preview */
+.notebook-panes::after {
+  content: ''; flex-shrink: 0;
+  width: 1px; background: var(--borderSubtle);
+  align-self: stretch;
+}
+.notebook-panes.preview-mode::after { display: none; }
+
+.notebook-textarea {
+  flex: 1; min-width: 0; height: 100%; box-sizing: border-box;
+  padding: 28px 5% 28px 6%;
+  background: var(--bg); color: var(--text);
+  border: none; outline: none; resize: none;
+  font-size: 14px; line-height: 1.8;
+  font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+  tab-size: 2; overflow-y: auto;
+}
+.notebook-textarea::placeholder { color: var(--textDim); }
+.notebook-panes.preview-mode .notebook-textarea { display: none; }
+
+.notebook-preview {
+  flex: 1; min-width: 0; overflow-y: auto;
+  padding: 28px 6% 48px 5%;
+  font-size: 15px; line-height: 1.75; color: var(--text);
+  font-family: Georgia, serif;
+  background: var(--readerCard);
+}
+/* In focus mode preview takes full width */
+.notebook-panes.preview-mode .notebook-preview { padding: 36px 12%; }
+.notebook-preview h1 { font-size: 26px; font-weight: 700; margin: 0 0 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.notebook-preview h2 { font-size: 20px; font-weight: 600; margin: 24px 0 10px; }
+.notebook-preview h3 { font-size: 16px; font-weight: 600; margin: 20px 0 8px; }
+.notebook-preview p  { margin: 0 0 14px; }
+.notebook-preview ul, .notebook-preview ol { margin: 0 0 14px; padding-left: 24px; }
+.notebook-preview li { margin-bottom: 4px; }
+.notebook-preview code { background: var(--hover); padding: 2px 5px; border-radius: 4px; font-size: 13px; font-family: monospace; }
+.notebook-preview pre { background: var(--hover); padding: 14px 16px; border-radius: 8px; overflow-x: auto; margin: 0 0 14px; }
+.notebook-preview pre code { background: none; padding: 0; }
+.notebook-preview blockquote { border-left: 3px solid var(--accent); margin: 0 0 14px; padding: 4px 16px; color: var(--textDim); }
+.notebook-preview hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+.notebook-preview a { color: var(--accent); text-decoration: underline; }
+.notebook-preview strong { font-weight: 700; }
+.notebook-preview em { font-style: italic; }
+
+/* Wikilinks [[target]] */
+.wikilink { border-radius: 3px; padding: 0 2px; cursor: pointer; text-decoration: none !important; display: inline-block; }
+.wikilink-nb   { color: var(--accent); background: rgba(56,139,253,0.1); }
+.wikilink-nb:hover   { background: rgba(56,139,253,0.22); }
+.wikilink-book { color: #9c6db0; background: rgba(156,109,176,0.12); }
+.wikilink-book:hover { background: rgba(156,109,176,0.24); }
+.wikilink-unresolved { color: var(--textDim); background: var(--hover); font-style: italic; }

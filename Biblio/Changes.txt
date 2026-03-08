@@ -1,17 +1,15 @@
 Fix all Bugs first before adding new features, polish matters
-Bugs and fixes:
-
-Secondary:
-
-
 New Features:
+- Ability to make "libraries", or "filing-cabinets," so that users can organize their books notebooks and audiobooks together better either by genre or by tags or other custom options. (Convinience feature, not sure if it's necessary)
+- Give the notebooks page all standard text editing features that are available in most other writing applications liek control over font size, line spacing, fonts, colors, highlighting, and adding pages. Make it look more like other applications with the UI elements for text editing.
+- If a user types in the first half of a markdown editing feature like __ for italicizing offer to autocomplete when tab is clicked it for them like you would in text editors like vs code or obsidian. Also when linking to other notes or books bring up a list of all of the options the user can link to so that if they click on it it autofills the linking box.
+- In the notebooks text editor, combing the live render and the typing so that there is no need to toggle between rendering and editing the text, and make it look more like you're typing on the page of a book.
+- When a reference is made but there is not note, if the user single clicks on that reference make a notebook with that title.
+- Parse the pdf viewer differently then the books, so that the pages viewer is different and so that the pdf pages are viewable and you can add notes to, summarize, define, and translate text within the pdf files, if it is better practice to separate the java script files then do that, if not, then don't. How would a professional application do this to allow for ease of use and consistent UX?
 
-
-
-
+- If the user clicks on a reference that refers to an epub, txt, pdf, or md file, or any of the audio files that have been added, ask them if they want to open the tab in normal view which would re-direct them away from the notebook file, or to open it in split view, which would open up that book or audio playback, or etc.. in a new tab to the right of the notebook. Force one page view in plit screen mode.
 
 Maybe add these options later (More complex):
-- Custom "Libraries" so that users can organize their books better either by genre or by tags or other custom options. (Convinience feature, not sure if it's necessary)
 - Porting over books from other apps. (Might not be possible)
 - Log-in and authentication. (Firebase or Supabase)
 Complex:
