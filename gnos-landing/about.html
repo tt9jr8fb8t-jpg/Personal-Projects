@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>About — Gnos</title>
+  <meta name="description" content="Learn about Gnos — a private, local-first reading and study application built for people who love books." />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+<!-- ── Navigation ── -->
+<nav>
+  <div class="nav-inner">
+    <a href="index.html" class="nav-logo">
+      <div class="nav-logo-mark">
+        <svg viewBox="0 0 20 22" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M18 2C14 2 9 6 6.5 11.5L5 18l6-2.5C16 13 19.5 8 19.5 4c0-1.2-.7-2-1.5-2z" fill="currentColor"/>
+          <path d="M5 18L3 21.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <span class="nav-logo-name">Gnos</span>
+    </a>
+
+    <ul class="nav-links">
+      <li><a href="index.html">Home</a></li>
+      <li><a href="about.html" class="active">About</a></li>
+      <li><a href="pricing.html">Pricing</a></li>
+    </ul>
+
+    <button class="nav-hamburger" aria-label="Open menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+</nav>
+
+<!-- Mobile Menu -->
+<div class="mobile-menu" role="dialog" aria-modal="true">
+  <button class="mobile-menu-close" aria-label="Close menu">✕</button>
+  <a href="index.html">Home</a>
+  <a href="about.html">About</a>
+  <a href="pricing.html">Pricing</a>
+</div>
+
+<!-- ── About Hero ── -->
+<section class="about-hero">
+  <div class="container">
+    <div class="about-hero-inner">
+      <div class="about-hero-text">
+        <p class="section-eyebrow" style="margin-bottom:16px;">The Story</p>
+        <h1>Built for people who love to <em>read</em>.</h1>
+        <p>
+          Gnos started as a personal project — a frustration with reading apps that
+          either lived entirely in the cloud, required subscriptions, or cluttered the
+          experience with social features nobody asked for.
+        </p>
+        <p>
+          Reading is private. It's intimate. Your library deserves to stay on your
+          machine, in a format you own, with an interface that gets out of the way.
+        </p>
+        <p>
+          Gnos is a desktop application that brings your books,
+          audiobooks, notes, and study tools into one beautiful space.
+          No account needed. No data leaves your computer. No in-app purchases.
+        </p>
+      </div>
+
+      <div class="about-visual">
+        <div class="about-visual-icon">
+          <svg viewBox="0 0 40 44" fill="none" xmlns="http://www.w3.org/2000/svg" width="56" height="56" aria-hidden="true">
+            <path d="M36 4C28 4 18 12 13 23L10 36l12-5C32 26 39 16 39 8c0-2.4-1.4-4-3-4z" fill="var(--accent)" fill-opacity="0.85"/>
+            <path d="M10 36L6 43" stroke="var(--accent)" stroke-width="3.2" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <h3>Gnos</h3>
+        <p style="font-family: var(--font-serif); font-size: 16px; color: var(--text-dim);">
+          "Your personal reading space."
+        </p>
+        <p style="margin-top: 14px; font-size: 13px;">
+          Books, audio, notes, sketches —<br>privately archived just for you.
+        </p>
+
+        <div style="display:inline-flex; gap:8px; align-items:center; margin-top:24px; padding:8px 16px; background:var(--accent-light); border:1px solid rgba(139,94,60,.2); border-radius:99px;">
+          <span style="width:8px;height:8px;background:var(--accent);border-radius:50%;display:inline-block;"></span>
+          <span style="font-size:13px; color:var(--accent); font-weight:500;">v0.1.0 — Early Access</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Principles ── -->
+<section class="about-principles">
+  <div class="container">
+    <div class="section-header">
+      <p class="section-eyebrow">Principles</p>
+      <h2 class="section-title">What Gnos believes in</h2>
+      <p class="section-sub">Every product decision flows from a handful of beliefs about what software should feel like.</p>
+    </div>
+
+    <div class="principles-grid">
+      <div class="principle-card">
+        <div class="principle-num">01</div>
+        <h3 class="principle-title">Local-first, always</h3>
+        <p class="principle-desc">
+          Your books, notes, and reading history belong to you. Gnos stores everything
+          on your machine using a file structure you can browse, back up, and own.
+          No cloud sync means no dependency on any server — Gnos works offline forever.
+        </p>
+      </div>
+
+      <div class="principle-card">
+        <div class="principle-num">02</div>
+        <h3 class="principle-title">Your content, your rules</h3>
+        <p class="principle-desc">
+          Gnos is a distraction-free environment built around <em>your</em> library.
+          Upload your own books, audiobooks, and notes — there is no store, no
+          recommended content, and no in-app purchases. What you bring in is all
+          that's here. No upsells. No lock-in.
+        </p>
+      </div>
+
+      <div class="principle-card">
+        <div class="principle-num">03</div>
+        <h3 class="principle-title">Beautiful defaults</h3>
+        <p class="principle-desc">
+          Gnos ships with six hand-crafted themes — including the signature warm sepia —
+          so it looks great out of the box without any configuration. Great typography
+          and spacing are non-negotiable, not optional extras.
+        </p>
+      </div>
+
+      <div class="principle-card">
+        <div class="principle-num">04</div>
+        <h3 class="principle-title">Study and reading, together</h3>
+        <p class="principle-desc">
+          The best learning happens at the intersection of reading and writing. Gnos
+          keeps your Markdown notebooks, flashcards, and sketchbook right next to your
+          books so you can learn actively without switching between a dozen different apps.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Tech Stack ── -->
+<section class="showcase" style="background: var(--bg);">
+  <div class="container">
+    <div class="section-header">
+      <p class="section-eyebrow">Under the Hood</p>
+      <h2 class="section-title">Built on solid foundations</h2>
+      <p class="section-sub">Gnos is a Tauri + React application — fast, lightweight, and genuinely native on every platform.</p>
+    </div>
+
+    <div class="feature-grid" style="grid-template-columns: repeat(3, 1fr);">
+      <div class="feature-card">
+        <div class="feature-icon">⚡</div>
+        <h3 class="feature-title">Tauri</h3>
+        <p class="feature-desc">A Rust-powered desktop framework that produces tiny, fast, native app bundles — much smaller than Electron alternatives.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">⚛️</div>
+        <h3 class="feature-title">React 19</h3>
+        <p class="feature-desc">The UI is built with the latest React, with Zustand for state management and Vite for a fast development experience.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">📐</div>
+        <h3 class="feature-title">Excalidraw + KaTeX</h3>
+        <p class="feature-desc">The sketchbook canvas uses Excalidraw's infinite whiteboard engine. Math notes render beautifully with KaTeX.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Formats ── -->
+<section class="platforms" style="background: var(--surface);">
+  <div class="container">
+    <p class="section-eyebrow">Supported Formats</p>
+    <h2 class="section-title" style="margin-bottom:8px;">Bring your whole library</h2>
+    <p class="section-sub" style="margin: 0 auto 28px;">Gnos opens the most common reading and document formats without any conversion needed.</p>
+    <div class="platform-chips">
+      <div class="platform-chip"><span class="platform-chip-icon">📕</span> EPUB</div>
+      <div class="platform-chip"><span class="platform-chip-icon">📄</span> PDF</div>
+      <div class="platform-chip"><span class="platform-chip-icon">📃</span> TXT</div>
+      <div class="platform-chip"><span class="platform-chip-icon">#️⃣</span> Markdown</div>
+      <div class="platform-chip"><span class="platform-chip-icon">🎵</span> MP3</div>
+      <div class="platform-chip"><span class="platform-chip-icon">🎧</span> M4B</div>
+      <div class="platform-chip"><span class="platform-chip-icon">🗂</span> Flashcard Decks</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Roadmap ── -->
+<section class="about-roadmap">
+  <div class="container">
+    <div class="section-header">
+      <p class="section-eyebrow">Roadmap</p>
+      <h2 class="section-title">Where Gnos is headed</h2>
+      <p class="section-sub">Gnos is under active development. Here's what's been shipped and what's coming next.</p>
+    </div>
+
+    <div class="timeline">
+      <div class="timeline-item">
+        <div class="timeline-date">Shipped · Early 2026</div>
+        <h3 class="timeline-title">Core Reading Experience</h3>
+        <p class="timeline-desc">EPUB and PDF reader with custom typography, six themes, reading progress tracking, and daily streak system.</p>
+      </div>
+
+      <div class="timeline-item">
+        <div class="timeline-date">Shipped · Mar 2026</div>
+        <h3 class="timeline-title">Audiobooks + Markdown Notebooks</h3>
+        <p class="timeline-desc">MP3 and M4B audiobook playback, rich Markdown and LaTeX notebooks with live preview, multi-tab split-pane layout.</p>
+      </div>
+
+      <div class="timeline-item">
+        <div class="timeline-date">Shipped · Mar 2026</div>
+        <h3 class="timeline-title">Flashcards + Sketchbook</h3>
+        <p class="timeline-desc">Spaced-repetition flashcard decks and an infinite Excalidraw whiteboard canvas inside the app.</p>
+      </div>
+
+      <div class="timeline-item upcoming">
+        <div class="timeline-date">Coming Soon</div>
+        <h3 class="timeline-title">Highlights &amp; Annotations</h3>
+        <p class="timeline-desc">Save highlights and margin notes directly in your e-books. Export to notebooks with one click.</p>
+      </div>
+
+      <div class="timeline-item upcoming">
+        <div class="timeline-date">Coming Soon</div>
+        <h3 class="timeline-title">Collections &amp; Tags</h3>
+        <p class="timeline-desc">Organize your library into collections and tag books for faster searching and filtering.</p>
+      </div>
+
+      <div class="timeline-item upcoming">
+        <div class="timeline-date">Future</div>
+        <h3 class="timeline-title">Mobile (iOS &amp; Android)</h3>
+        <p class="timeline-desc">Bring Gnos to your phone and tablet. Same local-first principles, same beautiful design.</p>
+      </div>
+
+      <div class="timeline-item upcoming">
+        <div class="timeline-date">Future</div>
+        <h3 class="timeline-title">Optional Cloud Services</h3>
+        <p class="timeline-desc">Gnos will eventually offer opt-in cloud features — sync across devices, encrypted backup, and seamless handoff between desktop and mobile. Local-first will always remain the default; cloud will always be a choice, never a requirement.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── CTA Banner ── -->
+<section class="cta-banner">
+  <div class="container">
+    <div class="cta-banner-inner">
+      <h2>Ready to build your reading space?</h2>
+      <p>Sign up for early access — no account, no cloud, no compromises.</p>
+      <div class="cta-banner-btns">
+        <a href="index.html#beta-form-hero" class="btn btn-cream btn-lg">Sign up for Early Access</a>
+        <a href="pricing.html#donate" class="btn btn-ghost btn-lg">Support the Project</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Footer ── -->
+<footer>
+  <div class="container">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <a href="index.html" class="nav-logo" style="margin-bottom:10px; display:inline-flex;">
+          <div class="nav-logo-mark">
+            <svg viewBox="0 0 20 22" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M18 2C14 2 9 6 6.5 11.5L5 18l6-2.5C16 13 19.5 8 19.5 4c0-1.2-.7-2-1.5-2z" fill="currentColor"/>
+              <path d="M5 18L3 21.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <span class="nav-logo-name">Gnos</span>
+        </a>
+        <p>A private reading and study space for curious minds. Built with care and late nights.</p>
+      </div>
+
+      <div class="footer-col">
+        <h4>Product</h4>
+        <ul>
+          <li><a href="index.html">Home</a></li>
+          <li><a href="about.html">About</a></li>
+          <li><a href="pricing.html">Pricing</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col">
+        <h4>Features</h4>
+        <ul>
+          <li><a href="index.html">E-Reader</a></li>
+          <li><a href="index.html">Audiobooks</a></li>
+          <li><a href="index.html">Notebooks</a></li>
+          <li><a href="index.html">Flashcards</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col">
+        <h4>Support</h4>
+        <ul>
+          <li><a href="pricing.html#donate">Donate</a></li>
+          <li><a href="about.html">Roadmap</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <span>© 2026 Gnos. Built with ❤ and late nights.</span>
+    </div>
+  </div>
+</footer>
+
+<script src="js/main.js"></script>
+
+</body>
+</html>

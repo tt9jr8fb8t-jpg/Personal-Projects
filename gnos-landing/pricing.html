@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pricing — Gnos</title>
+  <meta name="description" content="Gnos is free, forever. If you love it, consider supporting the developer." />
+  <link rel="stylesheet" href="css/styles.css" />
+
+  <!--
+    ╔══════════════════════════════════════════════════════════════════╗
+    ║  STRIPE SETUP                                                    ║
+    ║                                                                  ║
+    ║  1. Create a free Stripe account at stripe.com                   ║
+    ║  2. Get your publishable key from the Stripe Dashboard           ║
+    ║     (Developers → API keys → Publishable key)                    ║
+    ║  3. Replace STRIPE_PUBLISHABLE_KEY in js/main.js                 ║
+    ║  4. Create "Payment Link" products in Stripe Dashboard for $3,   ║
+    ║     $5, $10, $20 (one-time payments). Copy the price IDs into    ║
+    ║     DONATION_PRESETS in js/main.js                               ║
+    ║  5. For custom amounts, deploy a Netlify/Vercel serverless       ║
+    ║     function that creates a Stripe Checkout Session with the     ║
+    ║     entered amount. See stripe.com/docs/checkout/quickstart.     ║
+    ╚══════════════════════════════════════════════════════════════════╝
+  -->
+  <script src="https://js.stripe.com/v3/"></script>
+</head>
+<body>
+
+<!-- ── Navigation ── -->
+<nav>
+  <div class="nav-inner">
+    <a href="index.html" class="nav-logo">
+      <div class="nav-logo-mark">
+        <svg viewBox="0 0 20 22" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M18 2C14 2 9 6 6.5 11.5L5 18l6-2.5C16 13 19.5 8 19.5 4c0-1.2-.7-2-1.5-2z" fill="currentColor"/>
+          <path d="M5 18L3 21.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <span class="nav-logo-name">Gnos</span>
+    </a>
+
+    <ul class="nav-links">
+      <li><a href="index.html">Home</a></li>
+      <li><a href="about.html">About</a></li>
+      <li><a href="pricing.html" class="active">Pricing</a></li>
+    </ul>
+
+    <button class="nav-hamburger" aria-label="Open menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+</nav>
+
+<!-- Mobile Menu -->
+<div class="mobile-menu" role="dialog" aria-modal="true">
+  <button class="mobile-menu-close" aria-label="Close menu">✕</button>
+  <a href="index.html">Home</a>
+  <a href="about.html">About</a>
+  <a href="pricing.html">Pricing</a>
+</div>
+
+<!-- ── Pricing Hero ── -->
+<section class="pricing-hero">
+  <div class="container">
+    <p class="section-eyebrow">Simple Pricing</p>
+    <h1>Free, forever.</h1>
+    <p>
+      Gnos is and will always be free to use. If you find it valuable,
+      a small donation goes a long way toward keeping it alive.
+    </p>
+  </div>
+</section>
+
+<!-- ── Single Pricing Card ── -->
+<section class="pricing-cards">
+  <div class="container">
+    <div class="pricing-grid-single">
+      <div class="pricing-card">
+        <p class="pricing-plan">Free</p>
+        <div class="pricing-price"><sup>$</sup>0</div>
+        <p class="pricing-period">Always free · No card needed · No in-app purchases</p>
+        <div class="pricing-divider"></div>
+        <ul class="pricing-features-list">
+          <li><span class="pf-check">✓</span> Full e-reader (EPUB &amp; PDF)</li>
+          <li><span class="pf-check">✓</span> Audiobook player (MP3 &amp; M4B)</li>
+          <li><span class="pf-check">✓</span> Markdown notebooks with live preview</li>
+          <li><span class="pf-check">✓</span> LaTeX math rendering with KaTeX</li>
+          <li><span class="pf-check">✓</span> Flashcard decks (spaced repetition)</li>
+          <li><span class="pf-check">✓</span> Sketchbook / Excalidraw whiteboard</li>
+          <li><span class="pf-check">✓</span> Reading streaks &amp; analytics</li>
+          <li><span class="pf-check">✓</span> Six built-in themes</li>
+          <li><span class="pf-check">✓</span> 100% local — your data stays yours</li>
+          <li><span class="pf-check">✓</span> Upload your own books &amp; libraries</li>
+        </ul>
+        <a href="index.html#beta-form-hero" class="btn btn-primary btn-lg" style="width:100%; justify-content:center;">Sign up for Early Access</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Donation Section ── -->
+<section class="donation-section" id="donate" style="padding-top: 80px;">
+  <div class="container">
+    <div class="donation-card">
+      <div class="donation-icon">🍽</div>
+      <h2>Take me to lunch</h2>
+      <p>
+        Gnos is a one-person project built in the evenings and on weekends. If it
+        saves you from another subscription, or just makes reading more enjoyable,
+        consider a small donation. It genuinely means a lot.
+      </p>
+
+      <!-- Preset amounts -->
+      <div class="donation-amounts">
+        <button class="donation-amount-btn" data-index="0">$3</button>
+        <button class="donation-amount-btn selected" data-index="1">$5</button>
+        <button class="donation-amount-btn" data-index="2">$10</button>
+        <button class="donation-amount-btn" data-index="3">$20</button>
+      </div>
+
+      <!-- Custom amount -->
+      <div class="donation-custom">
+        <div class="donation-input-wrap">
+          <input
+            type="number"
+            id="donation-custom"
+            class="donation-input"
+            placeholder="Custom amount"
+            min="1"
+            step="1"
+          />
+        </div>
+      </div>
+
+      <button id="donate-btn" class="btn btn-primary btn-lg" style="min-width:200px; justify-content:center;">
+        Donate with Stripe
+      </button>
+
+      <div class="stripe-info">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M13.479 9.883c-1.626-.604-2.512-1.067-2.512-1.803 0-.622.511-1.001 1.423-1.001 1.647 0 3.294.604 4.451 1.292l.67-4.13C16.228 3.629 14.468 3 12.29 3 9.443 3 7.37 4.386 7.37 7.054c0 2.888 2.512 3.736 4.451 4.407 1.647.604 2.22 1.138 2.22 1.825 0 .671-.557 1.092-1.559 1.092-1.647 0-3.587-.671-4.939-1.495l-.67 4.197c1.286.715 3.209 1.36 5.32 1.36 3.024 0 5.248-1.273 5.248-4.094-.004-3.01-2.452-3.809-4.962-4.463z"/></svg>
+        Payments processed securely by Stripe · Never stored by Gnos
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── FAQ ── -->
+<section style="padding: 80px 0; background: var(--surface);">
+  <div class="container">
+    <div class="section-header">
+      <p class="section-eyebrow">Questions</p>
+      <h2 class="section-title">Frequently asked</h2>
+    </div>
+
+    <div style="max-width: 680px; margin: 0 auto; display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden;">
+      <details class="faq-item">
+        <summary>Will Gnos always be free?</summary>
+        <p>Yes. The core application — reading, audiobooks, notebooks, flashcards, sketchbook — is free forever. Future optional cloud/sync features may be offered for a small fee, but everything that's free today stays free. There are no in-app purchases.</p>
+      </details>
+
+      <details class="faq-item">
+        <summary>Is my data safe?</summary>
+        <p>Completely. Gnos is a fully offline desktop application. Nothing leaves your computer unless you explicitly move it. There's no analytics, no telemetry, and no cloud storage of any kind — yet. When optional cloud features are eventually added, they will always be opt-in.</p>
+      </details>
+
+      <details class="faq-item">
+        <summary>What file formats does Gnos support?</summary>
+        <p>Gnos supports EPUB, PDF, TXT, and Markdown for reading; MP3 and M4B for audio; and lets you create Markdown notebooks, flashcard decks, and Excalidraw sketchbooks natively. More formats are on the roadmap.</p>
+      </details>
+
+      <details class="faq-item">
+        <summary>Can I bring my own books and content?</summary>
+        <p>Yes — that's the whole idea. Gnos has no built-in store. You import your own EPUB and PDF files, your own audiobooks, and your own notes. Everything you put in stays yours, in your file system, in standard formats.</p>
+      </details>
+
+      <details class="faq-item">
+        <summary>Why donate? What does it go toward?</summary>
+        <p>Gnos is built by a single developer in their spare time. Donations help cover the cost of signing certificates (needed for macOS and Windows distribution), developer tools, and most importantly — motivate continued development. Every dollar helps.</p>
+      </details>
+
+      <details class="faq-item">
+        <summary>Is there a mobile app?</summary>
+        <p>Not yet. A mobile app for iOS and Android is on the roadmap. Sign up for early access or check the <a href="about.html">About page</a> to follow progress.</p>
+      </details>
+
+      <details class="faq-item" style="border-bottom: none;">
+        <summary>Will Gnos ever have cloud features?</summary>
+        <p>Eventually, yes — optional encrypted sync and cross-device backup are planned for the future. They will always be opt-in and will never be required to use the core app. See the <a href="about.html">roadmap</a> for details.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ── CTA Banner ── -->
+<section class="cta-banner">
+  <div class="container">
+    <div class="cta-banner-inner">
+      <h2>Your library is waiting.</h2>
+      <p>Sign up for early access and be among the first to try Gnos.</p>
+      <div class="cta-banner-btns">
+        <a href="index.html#beta-form-hero" class="btn btn-cream btn-lg">Sign up for Early Access</a>
+        <a href="#donate" class="btn btn-ghost btn-lg">Support the Project</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Footer ── -->
+<footer>
+  <div class="container">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <a href="index.html" class="nav-logo" style="margin-bottom:10px; display:inline-flex;">
+          <div class="nav-logo-mark">
+            <svg viewBox="0 0 20 22" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M18 2C14 2 9 6 6.5 11.5L5 18l6-2.5C16 13 19.5 8 19.5 4c0-1.2-.7-2-1.5-2z" fill="currentColor"/>
+              <path d="M5 18L3 21.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <span class="nav-logo-name">Gnos</span>
+        </a>
+        <p>A private reading and study space for curious minds. Built with care and late nights.</p>
+      </div>
+
+      <div class="footer-col">
+        <h4>Product</h4>
+        <ul>
+          <li><a href="index.html">Home</a></li>
+          <li><a href="about.html">About</a></li>
+          <li><a href="pricing.html">Pricing</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col">
+        <h4>Features</h4>
+        <ul>
+          <li><a href="index.html">E-Reader</a></li>
+          <li><a href="index.html">Audiobooks</a></li>
+          <li><a href="index.html">Notebooks</a></li>
+          <li><a href="index.html">Flashcards</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col">
+        <h4>Support</h4>
+        <ul>
+          <li><a href="pricing.html#donate">Donate</a></li>
+          <li><a href="about.html">Roadmap</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <span>© 2026 Gnos. Built with ❤ and late nights.</span>
+    </div>
+  </div>
+</footer>
+
+<!-- FAQ styles -->
+<style>
+  .faq-item {
+    background: var(--bg);
+    border-bottom: 1px solid var(--border-subtle);
+    transition: background .15s;
+  }
+  .faq-item:last-child { border-bottom: none; }
+  .faq-item summary {
+    padding: 20px 24px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 15px;
+    list-style: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+  }
+  .faq-item summary::-webkit-details-marker { display: none; }
+  .faq-item summary::after {
+    content: '+';
+    font-size: 20px;
+    font-weight: 300;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    margin-left: 16px;
+    transition: transform .2s;
+  }
+  .faq-item[open] summary::after { transform: rotate(45deg); }
+  .faq-item[open] { background: var(--surface); }
+  .faq-item p {
+    padding: 0 24px 20px;
+    font-size: 14.5px;
+    color: var(--text-dim);
+    line-height: 1.65;
+  }
+  .faq-item p a { color: var(--accent); }
+  .faq-item p a:hover { text-decoration: underline; }
+</style>
+
+<script src="js/main.js"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const btns = document.querySelectorAll('.donation-amount-btn');
+    if (btns[1]) btns[1].classList.add('selected');
+  });
+</script>
+
+</body>
+</html>
