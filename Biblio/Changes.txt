@@ -1,9 +1,0 @@
-Maybe add these options later (More complex):
-- Porting over books from other apps. (Might not be possible)
-- Log-in and authentication. (Firebase or Supabase)
-Complex:
-- Syncing audiobook progress to the pages of the book. (Possibly the hardest version)
-
-
-For porting to tauri:
-Help me get through the process of formatting this to work with Tauri. To allow for the app to be deployed on mac, linux, windows, and ios apps.
