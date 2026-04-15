@@ -5,7 +5,8 @@ import { onOpenUrl } from '@tauri-apps/plugin-deep-link'
 import { readFile } from '@tauri-apps/plugin-fs'
 import OnboardingView from '@/views/OnboardingView'
 
-import UpdateChecker from '@/components/UpdateChecker'
+import { check } from '@tauri-apps/plugin-updater'
+import { relaunch } from '@tauri-apps/plugin-process'
 import { PaneContext } from '@/lib/PaneContext'
 import LibraryView     from '@/views/LibraryView'
 import ReaderView      from '@/views/ReaderView'
@@ -356,12 +357,60 @@ function GnosLoadingScreen({ onDone }) {
   const isLight = themeKey === 'sepia' || themeKey === 'light' || themeKey === 'moss'
   const ruleOpacity = isLight ? 0.05 : 0.03
 
-  const [fade, setFade] = useState(false)
-  useEffect(() => {
-    const t1 = setTimeout(() => setFade(true), 600)
-    const t2 = setTimeout(onDone, 1000)
-    return () => { clearTimeout(t1); clearTimeout(t2) }
+  const [fade, setFade]         = useState(false)
+  const [update, setUpdate]     = useState(null)
+  const [phase, setPhase]       = useState('checking') // checking | idle | downloading | error
+  const [downloaded, setDownloaded] = useState(0)
+  const [total, setTotal]       = useState(null)
+  const [errorMsg, setErrorMsg] = useState('')
+  const dismissedRef = useRef(false)
+
+  const dismiss = useCallback(() => {
+    if (dismissedRef.current) return
+    dismissedRef.current = true
+    setFade(true)
+    setTimeout(onDone, 400)
   }, [onDone])
+
+  useEffect(() => {
+    let cancelled = false
+    // Timeout: if update check takes longer than 2.5s, proceed normally
+    const timeout = setTimeout(() => { if (!cancelled) dismiss() }, 2500)
+
+    check().then(u => {
+      if (cancelled) return
+      clearTimeout(timeout)
+      if (u?.available) {
+        setUpdate(u)
+        setPhase('idle')
+      } else {
+        // No update — dismiss after minimum display time
+        setTimeout(dismiss, 600)
+      }
+    }).catch(() => {
+      if (!cancelled) { clearTimeout(timeout); setTimeout(dismiss, 600) }
+    })
+
+    return () => { cancelled = true; clearTimeout(timeout) }
+  }, []) // eslint-disable-line
+
+  async function startUpdate() {
+    setPhase('downloading')
+    setDownloaded(0)
+    setTotal(null)
+    try {
+      await update.downloadAndInstall((event) => {
+        if (event.event === 'Started') setTotal(event.data.contentLength ?? null)
+        else if (event.event === 'Progress') setDownloaded(d => d + (event.data.chunkLength ?? 0))
+      })
+      await relaunch()
+    } catch (e) {
+      setPhase('error')
+      setErrorMsg(String(e))
+    }
+  }
+
+  const percent = total && downloaded ? Math.min(100, Math.round((downloaded / total) * 100)) : null
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 99999,
@@ -406,6 +455,68 @@ function GnosLoadingScreen({ onDone }) {
         width: 36, height: 2, borderRadius: 1,
         background: p.dim, opacity: 0.5, position: 'relative', zIndex: 1,
       }} />
+
+      {/* Update card — shown when update is available */}
+      {update && (
+        <div style={{
+          position: 'relative', zIndex: 2, marginTop: 8,
+          background: 'rgba(0,0,0,0.08)', border: `1px solid ${p.accent}40`,
+          borderRadius: 12, padding: '14px 18px', width: 280,
+          display: 'flex', flexDirection: 'column', gap: 10,
+        }}>
+          <div style={{ fontWeight: 700, fontSize: 13, color: p.text }}>Update available</div>
+          <div style={{ fontSize: 12, color: p.dim }}>
+            v{update.currentVersion} → <strong style={{ color: p.accent }}>v{update.version}</strong>
+          </div>
+          {update.body && (
+            <div style={{ fontSize: 11, color: p.dim, lineHeight: 1.5, maxHeight: 60, overflowY: 'auto' }}>
+              {update.body}
+            </div>
+          )}
+          {phase === 'downloading' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              <div style={{ height: 3, borderRadius: 3, background: `${p.accent}30`, overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%', borderRadius: 3, background: p.accent,
+                  width: percent != null ? `${percent}%` : '40%',
+                  transition: percent != null ? 'width 0.2s ease' : undefined,
+                  animation: percent == null ? 'gnos-update-indeterminate 1.2s ease-in-out infinite' : undefined,
+                }} />
+              </div>
+              <span style={{ fontSize: 11, color: p.dim, textAlign: 'right' }}>
+                {percent != null ? `${percent}%` : 'Downloading…'}
+              </span>
+            </div>
+          )}
+          {phase === 'error' && (
+            <div style={{ fontSize: 11, color: '#f85149' }}>{errorMsg}</div>
+          )}
+          {phase === 'idle' && (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={dismiss} style={{
+                flex: 1, padding: '6px 0', borderRadius: 6, cursor: 'pointer', fontSize: 12,
+                background: 'none', border: `1px solid ${p.accent}50`, color: p.dim,
+              }}>Later</button>
+              <button onClick={startUpdate} style={{
+                flex: 1, padding: '6px 0', borderRadius: 6, cursor: 'pointer', fontSize: 12,
+                background: p.accent, border: 'none', color: '#fff', fontWeight: 600,
+              }}>Update & Restart</button>
+            </div>
+          )}
+          {phase === 'error' && (
+            <button onClick={dismiss} style={{
+              padding: '6px 0', borderRadius: 6, cursor: 'pointer', fontSize: 12,
+              background: 'none', border: `1px solid ${p.accent}50`, color: p.dim,
+            }}>Dismiss</button>
+          )}
+          <style>{`
+            @keyframes gnos-update-indeterminate {
+              0%   { transform: translateX(-100%); width: 40%; }
+              100% { transform: translateX(350%);  width: 40%; }
+            }
+          `}</style>
+        </div>
+      )}
     </div>
   )
 }
@@ -818,7 +929,6 @@ export default function App() {
         />
       )}
 
-      <UpdateChecker />
     </div>
   )
 }
