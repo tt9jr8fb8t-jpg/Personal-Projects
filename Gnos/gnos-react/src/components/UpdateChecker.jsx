@@ -1,59 +1,55 @@
-import { useEffect, useState, useRef } from 'react'
-import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
+import { useEffect, useState } from 'react'
+import { check } from '@tauri-apps/plugin-updater'
+import { relaunch } from '@tauri-apps/plugin-process'
 
 export default function UpdateChecker() {
-  const [updateInfo, setUpdateInfo]   = useState(null)  // { version, current_version, body }
-  const [phase, setPhase]             = useState('idle') // idle | downloading | done | error
-  const [downloaded, setDownloaded]   = useState(0)
-  const [total, setTotal]             = useState(null)
-  const [errorMsg, setErrorMsg]       = useState('')
-  const unlisten = useRef(null)
+  const [update, setUpdate]       = useState(null)  // update object from plugin
+  const [phase, setPhase]         = useState('idle') // idle | downloading | error
+  const [downloaded, setDownloaded] = useState(0)
+  const [total, setTotal]         = useState(null)
+  const [errorMsg, setErrorMsg]   = useState('')
 
-  // Check for updates ~3 seconds after launch so it doesn't block startup
+  // Check ~3 seconds after launch so it doesn't block startup
   useEffect(() => {
     const t = setTimeout(async () => {
       try {
-        const info = await invoke('check_for_updates')
-        if (info) setUpdateInfo(info)
+        const u = await check()
+        if (u?.available) setUpdate(u)
       } catch {
-        // silently ignore — update server may not be configured yet
+        // silently ignore — update server may not be reachable in dev
       }
     }, 3000)
     return () => clearTimeout(t)
   }, [])
 
   function dismiss() {
-    setUpdateInfo(null)
+    setUpdate(null)
     setPhase('idle')
     setDownloaded(0)
     setTotal(null)
     setErrorMsg('')
-    if (unlisten.current) { unlisten.current(); unlisten.current = null }
   }
 
   async function startUpdate() {
     setPhase('downloading')
     setDownloaded(0)
     setTotal(null)
-
-    unlisten.current = await listen('update-download-progress', ({ payload }) => {
-      setDownloaded(d => d + (payload.chunk ?? 0))
-      if (payload.total != null) setTotal(payload.total)
-    })
-
     try {
-      await invoke('download_and_install_update')
-      // App will restart — if we somehow get here, show done
-      setPhase('done')
+      await update.downloadAndInstall((event) => {
+        if (event.event === 'Started') {
+          setTotal(event.data.contentLength ?? null)
+        } else if (event.event === 'Progress') {
+          setDownloaded(d => d + (event.data.chunkLength ?? 0))
+        }
+      })
+      await relaunch()
     } catch (e) {
       setPhase('error')
       setErrorMsg(String(e))
-      if (unlisten.current) { unlisten.current(); unlisten.current = null }
     }
   }
 
-  if (!updateInfo) return null
+  if (!update) return null
 
   const percent = total && downloaded ? Math.min(100, Math.round((downloaded / total) * 100)) : null
 
@@ -78,19 +74,19 @@ export default function UpdateChecker() {
         )}
       </div>
 
-      {/* Version line */}
+      {/* Version */}
       <div style={{ fontSize: 12, color: 'var(--textDim)' }}>
-        v{updateInfo.current_version} → <strong style={{ color: 'var(--accent)' }}>v{updateInfo.version}</strong>
+        v{update.currentVersion} → <strong style={{ color: 'var(--accent)' }}>v{update.version}</strong>
       </div>
 
-      {/* Release notes (trimmed) */}
-      {updateInfo.body && (
+      {/* Release notes */}
+      {update.body && (
         <div style={{
           fontSize: 11, color: 'var(--textDim)', lineHeight: 1.5,
           maxHeight: 72, overflowY: 'auto',
           borderTop: '1px solid var(--borderSubtle)', paddingTop: 8,
         }}>
-          {updateInfo.body}
+          {update.body}
         </div>
       )}
 
@@ -99,8 +95,7 @@ export default function UpdateChecker() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ height: 4, borderRadius: 4, background: 'var(--borderSubtle)', overflow: 'hidden' }}>
             <div style={{
-              height: '100%', borderRadius: 4,
-              background: 'var(--accent)',
+              height: '100%', borderRadius: 4, background: 'var(--accent)',
               width: percent != null ? `${percent}%` : '40%',
               transition: percent != null ? 'width 0.2s ease' : undefined,
               animation: percent == null ? 'gnos-update-indeterminate 1.2s ease-in-out infinite' : undefined,
@@ -122,38 +117,29 @@ export default function UpdateChecker() {
       {/* Actions */}
       {phase === 'idle' && (
         <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            onClick={dismiss}
-            style={{
-              flex: 1, padding: '6px 0', border: '1px solid var(--border)',
-              borderRadius: 6, background: 'none', color: 'var(--textDim)',
-              cursor: 'pointer', fontSize: 12, fontWeight: 500,
-            }}
-          >
+          <button onClick={dismiss} style={{
+            flex: 1, padding: '6px 0', border: '1px solid var(--border)',
+            borderRadius: 6, background: 'none', color: 'var(--textDim)',
+            cursor: 'pointer', fontSize: 12, fontWeight: 500,
+          }}>
             Later
           </button>
-          <button
-            onClick={startUpdate}
-            style={{
-              flex: 1, padding: '6px 0', border: 'none',
-              borderRadius: 6, background: 'var(--accent)', color: '#fff',
-              cursor: 'pointer', fontSize: 12, fontWeight: 600,
-            }}
-          >
+          <button onClick={startUpdate} style={{
+            flex: 1, padding: '6px 0', border: 'none',
+            borderRadius: 6, background: 'var(--accent)', color: '#fff',
+            cursor: 'pointer', fontSize: 12, fontWeight: 600,
+          }}>
             Update & Restart
           </button>
         </div>
       )}
 
       {phase === 'error' && (
-        <button
-          onClick={dismiss}
-          style={{
-            padding: '6px 0', border: '1px solid var(--border)',
-            borderRadius: 6, background: 'none', color: 'var(--textDim)',
-            cursor: 'pointer', fontSize: 12,
-          }}
-        >
+        <button onClick={dismiss} style={{
+          padding: '6px 0', border: '1px solid var(--border)',
+          borderRadius: 6, background: 'none', color: 'var(--textDim)',
+          cursor: 'pointer', fontSize: 12,
+        }}>
           Dismiss
         </button>
       )}
