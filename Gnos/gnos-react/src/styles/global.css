@@ -551,6 +551,7 @@ button { font-family: inherit; }
 .chapter-nav-wrapper {
   position: absolute; left: 50%; transform: translateX(-50%);
   text-align: center; z-index: 1;
+  max-width: calc(100% - 200px); overflow: hidden;
 }
 .btn-chapter { background: none; border: 1px solid transparent; border-radius: 7px; padding: 5px 10px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; transition: all 0.15s; }
 .btn-chapter:hover, .btn-chapter.active { background: var(--surfaceAlt); border-color: var(--border); }
@@ -707,7 +708,7 @@ button { font-family: inherit; }
   white-space: nowrap;
 }
 .progress-track { max-width: 800px; margin: 0 auto; height: 3px; background: var(--progressTrack); border-radius: 2px; overflow: hidden; }
-.progress-bar { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accentSecondary)); border-radius: 2px; transition: width 0.3s; width: 0%; }
+.progress-bar { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s; width: 0%; }
 #chapter-progress-info { display: none; }
 
 /* Inline EPUB images */
@@ -2573,3 +2574,46 @@ body.zen-active .nb-content-wrap {
   transition: background 0.1s, color 0.1s;
 }
 .cm-qd-reveal-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* === CODEMIRROR AUTOCOMPLETE TOOLTIP === */
+.cm-tooltip.cm-tooltip-autocomplete {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+  padding: 4px;
+  font-family: var(--font-ui);
+  animation: toolbarPop 0.13s ease;
+}
+.cm-tooltip.cm-tooltip-autocomplete > ul {
+  max-height: 240px;
+  font-family: var(--font-ui);
+  margin: 0;
+  padding: 0;
+}
+.cm-completionItem {
+  padding: 7px 10px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: background 0.1s;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.3;
+  font-family: var(--font-ui);
+}
+.cm-completionItem[aria-selected],
+.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] { background: var(--surface) !important; color: var(--text) !important; }
+.cm-completionLabel { font-weight: 500; color: var(--text); }
+.cm-completionItem[aria-selected] .cm-completionLabel { color: var(--accent); }
+.cm-completionDetail {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--textDim);
+  font-style: normal;
+  flex-shrink: 0;
+}
+.cm-completionIcon { display: none; }
+.cm-completionMatchingText { color: inherit; text-decoration: none; font-weight: 600; }

@@ -1,7 +1,7 @@
 {
   "$schema": "../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Gnos",
-  "version": "0.1.1",
+  "version": "0.1.0",
   "identifier": "com.gnos.dev",
   "build": {
     "frontendDist": "../dist",
@@ -16,6 +16,8 @@
         "title": " ",
         "width": 1200,
         "height": 800,
+        "minWidth": 760,
+        "minHeight": 520,
         "resizable": true,
         "fullscreen": false,
         "decorations": true,
@@ -27,7 +29,9 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": [
+          "**"
+        ]
       }
     }
   },
@@ -51,12 +55,42 @@
       "icons/icon.ico"
     ],
     "fileAssociations": [
-      { "ext": ["epub"], "name": "EPUB Document" },
-      { "ext": ["txt"],  "name": "Text Document" },
-      { "ext": ["md"],   "name": "Markdown Document" },
-      { "ext": ["pdf"],  "name": "PDF Document" },
-      { "ext": ["mp3"],  "name": "MP3 Audio" },
-      { "ext": ["m4b"],  "name": "M4B Audiobook" }
+      {
+        "ext": [
+          "epub"
+        ],
+        "name": "EPUB Document"
+      },
+      {
+        "ext": [
+          "txt"
+        ],
+        "name": "Text Document"
+      },
+      {
+        "ext": [
+          "md"
+        ],
+        "name": "Markdown Document"
+      },
+      {
+        "ext": [
+          "pdf"
+        ],
+        "name": "PDF Document"
+      },
+      {
+        "ext": [
+          "mp3"
+        ],
+        "name": "MP3 Audio"
+      },
+      {
+        "ext": [
+          "m4b"
+        ],
+        "name": "M4B Audiobook"
+      }
     ]
   }
 }

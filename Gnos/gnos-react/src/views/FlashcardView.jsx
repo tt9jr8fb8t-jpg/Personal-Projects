@@ -262,6 +262,7 @@ const FLASHCARD_CSS = `
     border: 1px solid transparent; background: transparent;
     color: var(--text); font-size: 14px; font-family: inherit;
     outline: none; resize: none; line-height: 1.5;
+    overflow: hidden; box-sizing: border-box;
     transition: background 0.1s, border-color 0.1s;
   }
   .fc-list-field:focus { background: var(--bg); border-color: var(--accent); }
@@ -479,10 +480,14 @@ export default function FlashcardView() {
   const activeTabId = useAppStore(s => s.activeTabId)
   const isActivePane = !paneTabId || paneTabId === activeTabId
 
-  const [mode, setMode] = useState('study') // 'study' | 'edit' | 'list'
+  const [mode, setMode] = useState(() => {
+    const c = (flashcardDecks.find(d => d.id === deck?.id) || deck)?.cards
+    return (!c || c.length === 0) ? 'edit' : 'study'
+  }) // 'study' | 'edit' | 'list'
   const [flipped, setFlipped] = useState(false)
   const [currentIdx, setCurrentIdx] = useState(0)
   const [title, setTitle] = useState(deck?.title || 'Untitled Deck')
+  const [studySide, setStudySide] = useState('front') // 'front' | 'back' — which side shows first
   const titleTimeout = useRef(null)
 
   // Get the live deck from store (in case cards have been updated)
@@ -539,10 +544,12 @@ export default function FlashcardView() {
 
     updateDeck(liveDeck.id, { cards: newCards, updatedAt: new Date().toISOString(), streak, lastStudyDate: today })
     persistFlashcardDecks()
+    // Flip to the question side first (hide answer), then advance after animation completes
     setFlipped(false)
-    // Move to next due card — recalculate due list
-    const newDue = newCards.filter(c => !c.nextReview || c.nextReview <= now)
-    if (currentIdx >= newDue.length) setCurrentIdx(0)
+    setTimeout(() => {
+      const newDue = newCards.filter(c => !c.nextReview || c.nextReview <= now)
+      if (currentIdx >= newDue.length) setCurrentIdx(0)
+    }, 520) // slightly longer than the 0.5s CSS transition
   }
 
   function handleTitleChange(val) {
@@ -588,15 +595,54 @@ export default function FlashcardView() {
     // CSV/TSV fallback
     const { readTextFile } = await import('@tauri-apps/plugin-fs')
     const text = await readTextFile(path)
-    const sep = text.includes('\t') ? '\t' : ','
-    const rows = text.trim().split('\n').map(line => line.split(sep))
-    const start = rows[0]?.[0]?.toLowerCase().includes('front') || rows[0]?.[0]?.toLowerCase().includes('question') ? 1 : 0
-    const newCards = rows.slice(start).filter(r => r[0]?.trim()).map(r => ({
-      id: makeId('fc'),
-      front: r[0]?.trim() || '',
-      back: r[1]?.trim() || '',
-      nextReview: 0, interval: 1, ease: 2.5, repetitions: 0,
-    }))
+
+    // Detect separator: tab > semicolon > comma
+    const sep = text.includes('\t') ? '\t' : text.includes(';') ? ';' : ','
+
+    // Parse respecting quoted fields
+    const parseCSVLine = (line) => {
+      const fields = []; let cur = ''; let inQ = false
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i]
+        if (ch === '"') { inQ = !inQ; continue }
+        if (ch === sep && !inQ) { fields.push(cur.trim()); cur = ''; continue }
+        cur += ch
+      }
+      fields.push(cur.trim())
+      return fields
+    }
+    const rawLines = text.trim().split('\n')
+    const rows = rawLines.map(parseCSVLine)
+
+    // Detect header row and column mapping
+    const firstRow = rows[0] || []
+    const headerKeywords = { front: /front|question|term|word|q\b/i, back: /back|answer|definition|meaning|a\b/i }
+    let frontCol = 0, backCol = 1, dataStart = 0
+
+    const headerCandidates = firstRow.map((h, i) => ({ h: h.toLowerCase().trim(), i }))
+    const frontMatch = headerCandidates.find(({ h }) => headerKeywords.front.test(h))
+    const backMatch  = headerCandidates.find(({ h }) => headerKeywords.back.test(h))
+
+    if (frontMatch || backMatch) {
+      dataStart = 1
+      frontCol = frontMatch?.i ?? 0
+      backCol  = backMatch?.i  ?? (frontCol === 0 ? 1 : 0)
+    }
+
+    // If every data row has only one column, try splitting on " - " (dash separator)
+    const dataRows = rows.slice(dataStart).filter(r => r[0]?.trim())
+    const allSingleCol = dataRows.length > 0 && dataRows.every(r => r.length === 1)
+
+    const newCards = dataRows.filter(r => r[frontCol]?.trim()).map(r => {
+      if (allSingleCol) {
+        // "Term - Definition" single-column format
+        const dashIdx = r[0].indexOf(' - ')
+        if (dashIdx !== -1) {
+          return { id: makeId('fc'), front: r[0].slice(0, dashIdx).trim(), back: r[0].slice(dashIdx + 3).trim(), nextReview: 0, interval: 1, ease: 2.5, repetitions: 0 }
+        }
+      }
+      return { id: makeId('fc'), front: r[frontCol]?.trim() || '', back: r[backCol]?.trim() || '', nextReview: 0, interval: 1, ease: 2.5, repetitions: 0 }
+    })
     if (newCards.length) {
       updateDeck(liveDeck.id, { cards: [...cards, ...newCards], updatedAt: new Date().toISOString() })
       persistFlashcardDecks()
@@ -694,7 +740,31 @@ export default function FlashcardView() {
           </span>
           {fcStreakDots}
         </div>
-        <button className="fc-mode-btn" onClick={handleImport} title="Import CSV/TSV">Import</button>
+        {mode === 'study' && (
+          <button
+            title={studySide === 'front' ? 'Studying Front→Back (click to flip to Back→Front)' : 'Studying Back→Front (click to flip to Front→Back)'}
+            onClick={() => { setStudySide(s => s === 'front' ? 'back' : 'front'); setFlipped(false) }}
+            style={{
+              width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)',
+              background: 'none', color: 'var(--textDim)', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              flexShrink: 0, transition: 'all 0.12s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--surfaceAlt)'; e.currentTarget.style.color = 'var(--text)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = 'var(--textDim)' }}
+          >
+            {studySide === 'front'
+              ? <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                  <rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.4"/>
+                  <path d="M5 8h6M9 6l2 2-2 2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              : <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                  <rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.4"/>
+                  <path d="M11 8H5M7 10L5 8l2-2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+            }
+          </button>
+        )}
         <button className={`fc-mode-btn${mode === 'study' ? ' active' : ''}`} onClick={() => { setMode('study'); setFlipped(false); setCurrentIdx(0) }}>Study</button>
         <button className={`fc-mode-btn${mode === 'list' ? ' active' : ''}`} onClick={() => setMode('list')}>List</button>
         <button className={`fc-mode-btn${mode === 'edit' ? ' active' : ''}`} onClick={() => setMode('edit')}>Edit</button>
@@ -705,27 +775,45 @@ export default function FlashcardView() {
         <div className="fc-study">
           {studyCard ? (
             <>
-              <div className="fc-card-wrapper" onClick={() => setFlipped(f => !f)}>
-                <div className={`fc-card-inner${flipped ? ' flipped' : ''}`}>
-                  <div className="fc-card-face fc-card-front" style={{ flexDirection: 'column', gap: 8, borderLeftColor: studyCard.color && studyCard.color !== 'transparent' ? studyCard.color : undefined, borderLeftWidth: studyCard.color && studyCard.color !== 'transparent' ? 4 : undefined }}>
-                    <div className="fc-card-label">Front</div>
-                    {studyCard.frontHtml
-                      ? <div className="fc-card-html" dangerouslySetInnerHTML={{ __html: studyCard.frontHtml }} />
-                      : studyCard.front || <span style={{ color: 'var(--textDim)', fontStyle: 'italic' }}>Empty card</span>}
-                    {!studyCard.frontHtml && studyCard.imageUrl && <img src={studyCard.imageUrl} alt="" style={{ maxWidth: '70%', maxHeight: 100, borderRadius: 8, objectFit: 'contain' }} />}
-                    {studyCard.sketchUrl && <img src={studyCard.sketchUrl} alt="" style={{ maxWidth: '80%', maxHeight: 80, borderRadius: 6 }} />}
-                    {studyCard.audioUrl && <AudioPlayBtn src={studyCard.audioUrl} />}
+              {/* studySide='front': front face shown first; studySide='back': back face shown first */}
+              {(() => {
+                // "question" = the side shown first; "answer" = the side revealed on flip
+                const qFront = studySide === 'front'
+                const qData = qFront
+                  ? { text: studyCard.front, html: studyCard.frontHtml, img: studyCard.imageUrl, sketch: studyCard.sketchUrl, audio: studyCard.audioUrl,    label: 'Front' }
+                  : { text: studyCard.back,  html: studyCard.backHtml,  img: studyCard.backImageUrl,                           audio: studyCard.backAudioUrl, label: 'Back'  }
+                const aData = qFront
+                  ? { text: studyCard.back,  html: studyCard.backHtml,  img: studyCard.backImageUrl,                           audio: studyCard.backAudioUrl, label: 'Back'  }
+                  : { text: studyCard.front, html: studyCard.frontHtml, img: studyCard.imageUrl, sketch: studyCard.sketchUrl, audio: studyCard.audioUrl,    label: 'Front' }
+                const colorStyle = studyCard.color && studyCard.color !== 'transparent'
+                  ? { borderLeftColor: studyCard.color, borderLeftWidth: 4 }
+                  : {}
+                return (
+                  <div className="fc-card-wrapper" onClick={() => setFlipped(f => !f)}>
+                    <div className={`fc-card-inner${flipped ? ' flipped' : ''}`}>
+                      {/* Question face (always visible when not flipped) */}
+                      <div className="fc-card-face fc-card-front" style={{ flexDirection: 'column', gap: 8, ...colorStyle }}>
+                        <div className="fc-card-label">{qData.label}</div>
+                        {qData.html
+                          ? <div className="fc-card-html" dangerouslySetInnerHTML={{ __html: qData.html }} />
+                          : qData.text || <span style={{ color: 'var(--textDim)', fontStyle: 'italic' }}>Empty card</span>}
+                        {!qData.html && qData.img && <img src={qData.img} alt="" style={{ maxWidth: '70%', maxHeight: 100, borderRadius: 8, objectFit: 'contain' }} />}
+                        {qData.sketch && <img src={qData.sketch} alt="" style={{ maxWidth: '80%', maxHeight: 80, borderRadius: 6 }} />}
+                        {qData.audio && <AudioPlayBtn src={qData.audio} />}
+                      </div>
+                      {/* Answer face — hidden until flipped to prevent sneak-peek */}
+                      <div className="fc-card-face fc-card-back" style={{ flexDirection: 'column', gap: 8, visibility: flipped ? 'visible' : 'hidden' }}>
+                        <div className="fc-card-label">{aData.label}</div>
+                        {aData.html
+                          ? <div className="fc-card-html" dangerouslySetInnerHTML={{ __html: aData.html }} />
+                          : aData.text || <span style={{ color: 'var(--textDim)', fontStyle: 'italic' }}>No answer</span>}
+                        {!aData.html && aData.img && <img src={aData.img} alt="" style={{ maxWidth: '70%', maxHeight: 100, borderRadius: 8, objectFit: 'contain' }} />}
+                        {aData.audio && <AudioPlayBtn src={aData.audio} />}
+                      </div>
+                    </div>
                   </div>
-                  <div className="fc-card-face fc-card-back" style={{ flexDirection: 'column', gap: 8 }}>
-                    <div className="fc-card-label">Back</div>
-                    {studyCard.backHtml
-                      ? <div className="fc-card-html" dangerouslySetInnerHTML={{ __html: studyCard.backHtml }} />
-                      : studyCard.back || <span style={{ color: 'var(--textDim)', fontStyle: 'italic' }}>No answer</span>}
-                    {!studyCard.backHtml && studyCard.backImageUrl && <img src={studyCard.backImageUrl} alt="" style={{ maxWidth: '70%', maxHeight: 100, borderRadius: 8, objectFit: 'contain' }} />}
-                    {studyCard.backAudioUrl && <AudioPlayBtn src={studyCard.backAudioUrl} />}
-                  </div>
-                </div>
-              </div>
+                )
+              })()}
               {flipped ? (
                 <div className="fc-rating-bar">
                   <button className="fc-rate-btn again" onClick={() => rateCard(1)}>Again <span style={{ fontSize: 10, opacity: 0.6 }}>(1)</span></button>
@@ -807,6 +895,7 @@ export default function FlashcardView() {
                         value={card.front}
                         placeholder="Front…"
                         onChange={e => updateCard(card.id, { front: e.target.value })}
+                        ref={el => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }}
                         onInput={e => { e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px' }}
                       />
                       {card.imageUrl && <img className="fc-list-img" src={card.imageUrl} alt="" />}
@@ -817,6 +906,7 @@ export default function FlashcardView() {
                         value={card.back}
                         placeholder="Back…"
                         onChange={e => updateCard(card.id, { back: e.target.value })}
+                        ref={el => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px' } }}
                         onInput={e => { e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px' }}
                       />
                       {card.backImageUrl && <img className="fc-list-img" src={card.backImageUrl} alt="" />}
@@ -924,6 +1014,9 @@ export default function FlashcardView() {
             )
           })()}
           <button className="fc-add-btn" style={{ maxWidth: 500 }} onClick={addCard}>+ Add Card</button>
+          {cards.length === 0 && (
+            <button className="fc-add-btn" style={{ maxWidth: 500 }} onClick={handleImport}>↑ Import CSV / Anki deck</button>
+          )}
         </div>
       )}
     </div>

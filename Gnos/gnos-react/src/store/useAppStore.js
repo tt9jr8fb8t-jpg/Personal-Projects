@@ -12,7 +12,7 @@ const useAppStore = create((set, get) => ({
   // ── View routing ────────────────────────────────────────────────────────────
   view: 'library',
   activeLibTab: 'library',
-  setView: (view) => set({ view }),
+  setView: (view) => set(s => ({ view, tabs: s.tabs.map(t => t.id === s.activeTabId ? { ...t, view } : t) })),
   setActiveLibTab: (tab) => set({ activeLibTab: tab }),
 
   // ── Side nav ────────────────────────────────────────────────────────────────

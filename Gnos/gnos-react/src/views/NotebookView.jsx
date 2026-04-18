@@ -24,10 +24,11 @@
  *   use the autocomplete tooltip.
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo, useContext, createElement } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, useContext, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import useAppStore from '@/store/useAppStore'
 import { PaneContext } from '@/lib/PaneContext'
+import { useIsActiveTab } from '@/lib/useIsActiveTab'
 import { loadNotebookContent, saveNotebookContent, saveNotebookImage, getNotebookFolderPath, addReadingMinutes } from '@/lib/storage'
 import { GnosNavButton } from '@/components/SideNav'
 import { listen } from '@tauri-apps/api/event'
@@ -781,7 +782,54 @@ function makePairInputHandler(cm) {
 }
 
 function makeSmartEnter(cm) {
-  return cm.view.keymap.of([{ key: 'Enter', run: cm.commands.insertNewlineAndIndentContinueMarkupList }])
+  const smartEnterRun = ({ state, dispatch }) => {
+    const sel = state.selection.main
+    if (!sel.empty) return false // Let default handle selections
+    const line = state.doc.lineAt(sel.from)
+    const text = line.text
+
+    // Detect unordered list item: leading spaces + marker (- * +) + space
+    const ulMatch = text.match(/^(\s*)([-*+]) /)
+    // Detect ordered list item: leading spaces + digits + . + space
+    const olMatch = text.match(/^(\s*)(\d+)\. /)
+
+    const match = ulMatch || olMatch
+    if (!match) return false
+
+    // Content after the marker
+    const prefixLen = match[0].length
+    const contentStart = line.from + prefixLen
+    const isEmpty = sel.from <= contentStart && text.slice(prefixLen).trim() === ''
+
+    if (isEmpty) {
+      // Empty list item — clear the line (exit the list)
+      dispatch(state.update({
+        changes: { from: line.from, to: line.to, insert: '' },
+        selection: { anchor: line.from },
+        scrollIntoView: true,
+      }))
+      return true
+    }
+
+    // Build next-line prefix: same indent + same marker (or incremented number)
+    let nextPrefix
+    if (olMatch) {
+      const n = parseInt(olMatch[2], 10)
+      nextPrefix = olMatch[1] + (n + 1) + '. '
+    } else {
+      nextPrefix = ulMatch[1] + ulMatch[2] + ' '
+    }
+
+    // Insert exactly one newline + list prefix (no blank line)
+    const insert = '\n' + nextPrefix
+    dispatch(state.update({
+      changes: { from: sel.from, to: sel.to, insert },
+      selection: { anchor: sel.from + insert.length },
+      scrollIntoView: true,
+    }))
+    return true
+  }
+  return cm.view.keymap.of([{ key: 'Enter', run: smartEnterRun }])
 }
 
 // ─── Inline format shortcuts ──────────────────────────────────────────────────
@@ -1155,6 +1203,17 @@ function makeMathCalcPlugin(cm) {
       const valStr = m[2].trim()
       // Skip markdown artifacts (headings, lists, blockquotes, URLs, code fences…)
       if (!name || /^[-*#>|`\\]/.test(name) || /[:/\\]/.test(name)) continue
+      // Variable names must start with a letter and be reasonably short
+      if (!/^[a-zA-Z]/.test(name) || name.length > 50) continue
+      // Only treat as a variable definition if the RHS looks numeric-capable:
+      // it must contain at least one digit, OR reference an already-defined variable.
+      // This prevents plain prose lines like "Note: See above" from being highlighted.
+      const hasDigit = /\d/.test(valStr)
+      const refsKnownVar = varDefs.some(v => {
+        const esc = v.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        return new RegExp(`(?<![_a-zA-Z0-9])${esc}(?![_a-zA-Z0-9])`, 'i').test(valStr)
+      })
+      if (!hasDigit && !refsKnownVar) continue
       const token       = getVarToken(name)
       const substituted = applyVarSubstitution(valStr, varDefs)
       let value = null
@@ -4072,6 +4131,185 @@ function makeLinkCommands(cm, onPickRef) {
   }]))
 }
 
+// ─── /color, /font, /spacing, /size — keymap only ────────────────────────────
+// Detection + coord lookup lives in the EditorView.updateListener (see below).
+// This function only provides the Prec.high keymap so Enter/Tab/↑↓ work.
+function makeInlineCmdPlugin(cm, navRef) {
+  const { Prec } = cm.state
+  const { keymap: keymapFacet } = cm.view
+
+  const CMD_RE = /^\s*\/(color|font|spacing|size)(?::([^\s]*))?$/
+  const shared = { selectedIdx: 0, type: null }
+
+  function detect(state) {
+    const cur = state.selection.main.head
+    const line = state.doc.lineAt(cur)
+    const m = line.text.match(CMD_RE)
+    if (!m) return null
+    return { type: m[1], hint: (m[2] || '').toLowerCase(), lineFrom: line.from, lineTo: line.to }
+  }
+
+  return Prec.high(keymapFacet.of([
+    {
+      key: 'Escape',
+      run: _view => {
+        const result = detect(_view.state)
+        if (!result) return false
+        _inlineCmdSelectedIdx.current = 0
+        shared.selectedIdx = 0; shared.type = null
+        navRef?.current?.()
+        return false  // let Escape propagate
+      },
+    },
+    {
+      key: 'Tab',
+      run: view => {
+        const result = detect(view.state)
+        if (!result) return false
+        _confirmInlineCmd(view, result.type, _inlineCmdSelectedIdx.current, result.hint, result.lineFrom, result.lineTo)
+        shared.selectedIdx = 0; shared.type = null; _inlineCmdSelectedIdx.current = 0
+        return true
+      },
+    },
+    {
+      key: 'Enter',
+      run: view => {
+        const result = detect(view.state)
+        if (!result) return false
+        _confirmInlineCmd(view, result.type, _inlineCmdSelectedIdx.current, result.hint, result.lineFrom, result.lineTo)
+        shared.selectedIdx = 0; shared.type = null; _inlineCmdSelectedIdx.current = 0
+        return true
+      },
+    },
+  ]))
+}
+
+// Shared mutable ref for selectedIdx — written by the keymap, read by React render
+const _inlineCmdSelectedIdx = { current: 0 }
+
+const INLINE_COLORS = [
+  { name: 'Red',     value: '#e53935' },
+  { name: 'Orange',  value: '#f4511e' },
+  { name: 'Amber',   value: '#f59f00' },
+  { name: 'Yellow',  value: '#e6c20a' },
+  { name: 'Green',   value: '#2e7d32' },
+  { name: 'Teal',    value: '#00796b' },
+  { name: 'Cyan',    value: '#0097a7' },
+  { name: 'Blue',    value: '#1565c0' },
+  { name: 'Indigo',  value: '#3949ab' },
+  { name: 'Violet',  value: '#6a1b9a' },
+  { name: 'Purple',  value: '#8e24aa' },
+  { name: 'Pink',    value: '#d81b60' },
+  { name: 'Rose',    value: '#c2185b' },
+  { name: 'Brown',   value: '#6d4c41' },
+  { name: 'Slate',   value: '#546e7a' },
+  { name: 'Gray',    value: '#757575' },
+  { name: 'Silver',  value: '#9e9e9e' },
+  { name: 'Muted',   value: 'var(--textDim)' },
+  { name: 'Accent',  value: 'var(--accent)' },
+  { name: 'Default', value: 'inherit' },
+]
+
+const INLINE_FONTS = [
+  { name: 'Default',       value: 'var(--nb-ff)' },
+  { name: 'Georgia',       value: 'Georgia, serif' },
+  { name: 'Palatino',      value: '"Palatino Linotype", Palatino, serif' },
+  { name: 'Garamond',      value: '"EB Garamond", Garamond, serif' },
+  { name: 'Times',         value: '"Times New Roman", Times, serif' },
+  { name: 'Arial',         value: 'Arial, sans-serif' },
+  { name: 'Helvetica',     value: 'Helvetica, Arial, sans-serif' },
+  { name: 'Verdana',       value: 'Verdana, Geneva, sans-serif' },
+  { name: 'Trebuchet',     value: '"Trebuchet MS", sans-serif' },
+  { name: 'Optima',        value: '"Optima", "Segoe UI", sans-serif' },
+  { name: 'Gill Sans',     value: '"Gill Sans", "Gill Sans MT", sans-serif' },
+  { name: 'Futura',        value: '"Futura", "Century Gothic", sans-serif' },
+  { name: 'Courier',       value: '"Courier New", Courier, monospace' },
+  { name: 'Menlo',         value: 'Menlo, Monaco, Consolas, monospace' },
+  { name: 'SF Mono',       value: '"SF Mono", "Fira Code", monospace' },
+]
+
+const INLINE_SPACINGS = [
+  { name: 'Tight',    value: '1.3', preview: '1.3×' },
+  { name: 'Compact',  value: '1.5', preview: '1.5×' },
+  { name: 'Normal',   value: '1.8', preview: '1.8×' },
+  { name: 'Relaxed',  value: '2.2', preview: '2.2×' },
+  { name: 'Double',   value: '2.8', preview: '2.8×' },
+]
+
+const INLINE_SIZES = [
+  { name: 'XS',     value: '0.72em', preview: 'Aa' },
+  { name: 'Small',  value: '0.85em', preview: 'Aa' },
+  { name: 'Normal', value: '1em',    preview: 'Aa' },
+  { name: 'Large',  value: '1.2em',  preview: 'Aa' },
+  { name: 'XL',     value: '1.5em',  preview: 'Aa' },
+  { name: 'XXL',    value: '2em',    preview: 'Aa' },
+  { name: 'Huge',   value: '2.8em',  preview: 'Aa' },
+]
+
+function _getOptionCount(type) {
+  if (type === 'color') return INLINE_COLORS.length
+  if (type === 'font') return INLINE_FONTS.length
+  if (type === 'spacing') return INLINE_SPACINGS.length
+  if (type === 'size') return INLINE_SIZES.length
+  return 0
+}
+
+function _confirmInlineCmd(view, type, selectedIdx, hint, lineFrom, lineTo) {
+  let marker = ''
+  if (type === 'color') {
+    // If hint matches a named color, use it; otherwise use selected
+    const byName = INLINE_COLORS.find(c => c.name.toLowerCase() === hint)
+    const opt = byName || INLINE_COLORS[Math.min(selectedIdx, INLINE_COLORS.length - 1)]
+    if (opt) marker = `{color:${opt.value}}`
+  } else if (type === 'font') {
+    const byName = INLINE_FONTS.find(f => f.name.toLowerCase().startsWith(hint))
+    const opt = byName || INLINE_FONTS[Math.min(selectedIdx, INLINE_FONTS.length - 1)]
+    if (opt) marker = `{font:${opt.value}}`
+  } else if (type === 'spacing') {
+    const byName = INLINE_SPACINGS.find(s => s.name.toLowerCase().startsWith(hint))
+    const opt = byName || INLINE_SPACINGS[Math.min(selectedIdx, INLINE_SPACINGS.length - 1)]
+    if (opt) marker = `{spacing:${opt.value}}`
+  } else if (type === 'size') {
+    const byName = INLINE_SIZES.find(s => s.name.toLowerCase().startsWith(hint))
+    const opt = byName || INLINE_SIZES[Math.min(selectedIdx, INLINE_SIZES.length - 1)]
+    if (opt) marker = `{size:${opt.value}}`
+  }
+  if (!marker) return
+  view.dispatch({
+    changes: { from: lineFrom, to: lineTo, insert: marker },
+    selection: { anchor: lineFrom + marker.length },
+  })
+}
+
+// ─── Auto-close {//} when user types // after an open inline-cmd span ────────
+function makeInlineCmdCloseHandler(cm) {
+  return cm.view.EditorView.inputHandler.of((view, from, to, text) => {
+    if (text !== '/') return false
+    const { state } = view
+    const docText = state.doc.toString()
+    const charBefore = from > 0 ? docText[from - 1] : ''
+    // Only trigger on second slash (user just typed the second /)
+    if (charBefore !== '/') return false
+    // Don't convert if preceded by : (e.g., https://)
+    if (from >= 2 && docText[from - 2] === ':') return false
+    // Check if there's an unclosed {color:...}, {font:...}, or {spacing:...} before cursor
+    const textBefore = docText.slice(0, from - 1) // text before the first slash
+    const openRe = /\{(color|font|spacing|size):[^}]+\}/g
+    const closeRe = /\{\/\/\}/g
+    let openCount = 0, closeCount = 0
+    let m
+    while ((m = openRe.exec(textBefore)) !== null) openCount++
+    while ((m = closeRe.exec(textBefore)) !== null) closeCount++
+    if (openCount <= closeCount) return false // no unclosed span
+    // Replace the first / and insert {//}
+    view.dispatch({
+      changes: { from: from - 1, to, insert: '{//}' },
+      selection: { anchor: from - 1 + 4 },
+    })
+    return true
+  })
+}
+
 // ─── Live preview plugin ──────────────────────────────────────────────────────
 function makeLivePlugin(cm, RangeSetBuilder, notebooks, library, sketchbooks = [], flashcardDecks = [], notebookDir = null, isPreview = false) {
   const { ViewPlugin, Decoration, WidgetType } = cm.view
@@ -4929,8 +5167,86 @@ function makeLivePlugin(cm, RangeSetBuilder, notebooks, library, sketchbooks = [
       }
     } catch { /**/ }
 
+    // ── {color:X}...{//}, {font:X}...{//}, {spacing:X}...{//}, {size:X}...{//} ──
+    try {
+      function inlineStyleAttr(type, value) {
+        if (type === 'color')   return `color:${value}`
+        if (type === 'font')    return `font-family:${value}`
+        if (type === 'spacing') return `line-height:${value}`
+        if (type === 'size')    return `font-size:${value}`
+        return ''
+      }
+
+      // ── Pass 1: closed spans — full {type:val}...{//} pairs ──────────────
+      const spanRe = /\{(color|font|spacing|size):([^}]+)\}([\s\S]*?)\{\/\/\}/g
+      const closedOpenStarts = new Set()  // open-tag start positions handled here
+      let sm
+      while ((sm = spanRe.exec(fullDoc)) !== null) {
+        const type     = sm[1]
+        const rawVal   = sm[2]
+        const value    = rawVal.trim()
+        const spanStart = sm.index
+        const spanEnd  = sm.index + sm[0].length
+        const openLen  = 1 + type.length + 1 + rawVal.length + 1  // {type:rawVal}
+        const openEnd  = spanStart + openLen
+        const closeStart = spanEnd - 4  // {//} is 4 chars
+
+        if (openEnd > spanEnd || closeStart < openEnd) continue
+        closedOpenStarts.add(spanStart)
+
+        // Opening marker — hide unless cursor is inside it
+        if (inCur(spanStart, openEnd)) {
+          inlines.push({ from: spanStart, to: openEnd, deco: Decoration.mark({ class: 'cm-lv-p' }) })
+        } else {
+          inlines.push({ from: spanStart, to: openEnd, deco: Decoration.mark({ class: 'cm-lv-hidden' }) })
+        }
+
+        // Content — apply inline style
+        if (openEnd < closeStart) {
+          const s = inlineStyleAttr(type, value)
+          if (s) inlines.push({ from: openEnd, to: closeStart, deco: Decoration.mark({ attributes: { style: s } }) })
+        }
+
+        // Closing marker — hide unless cursor is inside it
+        if (inCur(closeStart, spanEnd)) {
+          inlines.push({ from: closeStart, to: spanEnd, deco: Decoration.mark({ class: 'cm-lv-p' }) })
+        } else {
+          inlines.push({ from: closeStart, to: spanEnd, deco: Decoration.mark({ class: 'cm-lv-hidden' }) })
+        }
+      }
+
+      // ── Pass 2: open (unclosed) spans — live preview to end of document ─────
+      // Scans for {type:val} markers that have no matching {//} closer.
+      // Styles everything from the marker to the end of the document so the user
+      // sees the formatting immediately — no need to wait for {//}.
+      const openTagRe = /\{(color|font|spacing|size):([^}]+)\}/g
+      let ot
+      while ((ot = openTagRe.exec(fullDoc)) !== null) {
+        const oStart = ot.index
+        const oEnd   = ot.index + ot[0].length
+        const type   = ot[1]
+        const value  = ot[2].trim()
+
+        // Skip tags that were already matched by Pass 1
+        if (closedOpenStarts.has(oStart)) continue
+
+        // Hide/show the opening marker based on cursor position
+        if (inCur(oStart, oEnd)) {
+          inlines.push({ from: oStart, to: oEnd, deco: Decoration.mark({ class: 'cm-lv-p' }) })
+        } else {
+          inlines.push({ from: oStart, to: oEnd, deco: Decoration.mark({ class: 'cm-lv-hidden' }) })
+        }
+
+        // Apply style from end of marker to end of document
+        if (oEnd < doc.length) {
+          const s = inlineStyleAttr(type, value)
+          if (s) inlines.push({ from: oEnd, to: doc.length, deco: Decoration.mark({ attributes: { style: s } }) })
+        }
+      }
+    } catch { /**/ }
+
     // ── Sort and build ────────────────────────────────────────────────────
-    inlines.sort((a, b) => a.from !== b.from ? a.from - b.from : b.to - a.to)
+    inlines.sort((a, b) => a.from !== b.from ? a.from - b.from : a.to - b.to)
 
     // Remove mark decorations that overlap with replace-widget ranges.
     // Overlapping mark+replace in a CM6 RangeSet causes errors that silently drop widgets.
@@ -5539,6 +5855,7 @@ function ViewModeBtn({ viewMode, setViewMode }) {
 export default function NotebookView() {
   const themeKey        = useAppStore(s => s.themeKey ?? 'dark')
   const paneTabId      = useContext(PaneContext)
+  const isActive       = useIsActiveTab()
   const notebook       = useAppStore(useCallback(
     s => {
       const tab = paneTabId ? s.tabs.find(t => t.id === paneTabId) : null
@@ -5601,6 +5918,14 @@ export default function NotebookView() {
   // Tauri drag-drop handler to skip processing if DOM already handled the drop.
   const domDropRef = useRef(0)
   const [wikiDrop, setWikiDrop] = useState(null) // { options, selectedIdx, coords }
+  const [inlineCmd, setInlineCmd] = useState(null) // { type, hint, selectedIdx, coords, lineFrom, lineTo }
+  const inlineCmdRef = useRef(null)
+  const inlineCmdNavRef = useRef(null)  // called by CM6 keymap to push selectedIdx into React state
+  const [cursorPos, setCursorPos] = useState(0)
+  // Keep nav callback fresh every render so it always closes over the latest setInlineCmd
+  inlineCmdNavRef.current = () => {
+    setInlineCmd(prev => prev ? { ...prev, selectedIdx: _inlineCmdSelectedIdx.current } : prev)
+  }
 
   contentRef.current = content
   titleRef.current   = noteTitle
@@ -5716,6 +6041,7 @@ export default function NotebookView() {
   }, [setView, paneTabId]) // eslint-disable-line react-hooks/exhaustive-deps
   wikiNavRef.current  = handleWikiNav
   linkPickRef.current = info => setLinkPicker(info)
+  inlineCmdRef.current = inlineCmd  // kept in sync for the stable window keydown listener
 
   function createAndOpenItem(title, kind) {
     const s = useAppStore.getState()
@@ -5747,7 +6073,7 @@ export default function NotebookView() {
 
   // ── Study timer — tracks minutes spent in notebook for streak/stats ────────
   useEffect(() => {
-    if (!notebook) return
+    if (!notebook || !isActive) return
     const TICK_MS = 60_000
     const IDLE_MS = 120_000
     let lastActive = Date.now()
@@ -5770,10 +6096,11 @@ export default function NotebookView() {
       window.removeEventListener('keydown',   onActivity)
       if (accumulated >= 0.1) addReadingMinutes(Math.max(1, Math.round(accumulated))).catch(() => {})
     }
-  }, [notebook])
+  }, [notebook, isActive])
 
   // ── Cmd/Ctrl + +/- font size zoom ─────────────────────────────────────────
   useEffect(() => {
+    if (!isActive) return
     const handler = (e) => {
       if (!(e.metaKey || e.ctrlKey)) return
       if (e.key !== '+' && e.key !== '=' && e.key !== '-') return
@@ -5786,7 +6113,30 @@ export default function NotebookView() {
     }
     window.addEventListener('keydown', handler, { capture: true })
     return () => window.removeEventListener('keydown', handler, { capture: true })
-  }, [setPref, persistPreferences])
+  }, [isActive, setPref, persistPreferences])
+
+  // ── Inline cmd dropdown arrow-key navigation ─────────────────────────────
+  // Capture phase on window so we fire before CM6 — prevents cursor movement
+  // in the editor while the /color /font /spacing /size dropdown is open.
+  useEffect(() => {
+    const onKey = (e) => {
+      const cmd = inlineCmdRef.current
+      if (!cmd) return
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+      e.preventDefault()
+      e.stopPropagation()
+      const delta = e.key === 'ArrowDown' ? 1 : -1
+      setInlineCmd(prev => {
+        if (!prev) return prev
+        const count = _getOptionCount(prev.type)
+        const newIdx = ((prev.selectedIdx ?? 0) + delta + count) % count
+        _inlineCmdSelectedIdx.current = newIdx
+        return { ...prev, selectedIdx: newIdx }
+      })
+    }
+    window.addEventListener('keydown', onKey, { capture: true })
+    return () => window.removeEventListener('keydown', onKey, { capture: true })
+  }, [])
 
   // ── Mount CodeMirror ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -5823,6 +6173,10 @@ export default function NotebookView() {
         // /table, /linkf, /linkw, /linkv slash commands (must be before smartEnter)
         makeTableCommand(cm),
         makeLinkCommands(cm, linkPickRef),
+        // /color, /font, /spacing, /size inline command keymap
+        makeInlineCmdPlugin(cm, inlineCmdNavRef),
+        // {//} auto-close for inline-cmd spans
+        makeInlineCmdCloseHandler(cm),
         makeSmartEnter(cm),
         // Pair auto-wrap via input handler
         makePairInputHandler(cm),
@@ -5879,6 +6233,10 @@ export default function NotebookView() {
             } else {
               setSelectionWC(0)
             }
+          }
+          // Track cursor position so the inline-cmd useLayoutEffect can fire
+          if (upd.selectionSet || upd.docChanged) {
+            setCursorPos(upd.state.selection.main.head)
           }
         }),
         EditorView.lineWrapping,
@@ -5990,6 +6348,34 @@ export default function NotebookView() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoaded, viewMode, notebook?.id])
+
+  // ── Inline command dropdown detection ─────────────────────────────────────
+  // useLayoutEffect fires after React's DOM mutations, before paint — exactly
+  // when coordsAtPos is reliable. cursorPos changes on every keystroke/cursor move.
+  const INLINE_CMD_RE = /^\s*\/(color|font|spacing|size)(?::([^\s]*))?$/
+  useLayoutEffect(() => {
+    const view = cmRef.current
+    if (!view) { setInlineCmd(null); return }
+    const cur = view.state.selection.main.head
+    const line = view.state.doc.lineAt(cur)
+    const m = line.text.match(INLINE_CMD_RE)
+    if (!m) {
+      setInlineCmd(prev => prev ? null : prev)
+      return
+    }
+    const coords = view.coordsAtPos(cur)
+    const type = m[1]
+    setInlineCmd(prev => ({
+      type,
+      hint: (m[2] || '').toLowerCase(),
+      selectedIdx: prev?.type === type ? (prev.selectedIdx ?? 0) : 0,
+      lineFrom: line.from,
+      lineTo: line.to,
+      coords: coords
+        ? { left: coords.left, top: coords.bottom + 6 }
+        : { left: 120, top: 160 },
+    }))
+  }, [cursorPos]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Save ──────────────────────────────────────────────────────────────────
   const animateSave = useCallback(() => {
@@ -6140,6 +6526,7 @@ export default function NotebookView() {
 
   // ── Ctrl+F ────────────────────────────────────────────────────────────────
   useEffect(() => {
+    if (!isActive) return
     const h = e => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
         e.preventDefault(); findRef.current?.focus(); findRef.current?.select()
@@ -6148,7 +6535,7 @@ export default function NotebookView() {
     }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [])
+  }, [isActive])
 
   // ── Tauri native file drop (Finder drag-and-drop) ───────────────────────────
   useEffect(() => {
@@ -6419,6 +6806,9 @@ export default function NotebookView() {
       width: 0;
       overflow: hidden;
     }
+
+    /* ── Inline styled spans ({color:X}, {font:X}, {spacing:X}) ── */
+    .cm-inline-styled { /* styles applied via inline style attribute */ }
 
     /* ══════════════════════════════════════════════════════
        LIVE VIEW — line-level class decorations
@@ -7918,6 +8308,18 @@ export default function NotebookView() {
                 <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.5"/>
                 <path d="M10 10l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
               </svg>
+              {/* TODO /view commands — planned, not yet implemented:
+                  /view s  → switch to scrolling layout (current behavior)
+                  /view p  → switch to paginated layout (pages like a book)
+                  Implementation plan:
+                  - Add `viewLayout` state: 'scroll' | 'pages'
+                  - 'scroll' = current cm-scroller behavior (flex-col, overflow-y:auto)
+                  - 'pages'  = fixed-height cm-content panels, one page at a time,
+                               with prev/next page controls; page breaks at \n---\n or
+                               auto-calculated from content height vs viewport
+                  - Search bar onChange: detect /view s or /view p → switch layout, clear input
+                  - Persist layout preference in notebook metadata (useAppStore)
+              */}
               <input ref={findRef} id="nb-search-input"
                 style={{ background:'none', border:'none', color:'var(--text)', outline:'none', fontSize:13, flex:1, minWidth:0 }}
                 placeholder={noteTitle || notebook?.title || 'Find…'} value={findQ}
@@ -8146,6 +8548,108 @@ export default function NotebookView() {
               }}>Tab to confirm · Esc to dismiss</div>
             </div>
           )}
+          {/* ── Inline command dropdown (/color, /font, /spacing, /size) ──── */}
+          {inlineCmd && inlineCmd.coords && (() => {
+            const { type, hint, selectedIdx, coords, lineFrom, lineTo } = inlineCmd
+            const options = type === 'color' ? INLINE_COLORS
+              : type === 'font' ? INLINE_FONTS
+              : type === 'spacing' ? INLINE_SPACINGS
+              : INLINE_SIZES
+
+            const filtered = hint
+              ? options.filter(o => o.name.toLowerCase().startsWith(hint))
+              : options
+            const activeIdx = Math.min(selectedIdx, Math.max(0, filtered.length - 1))
+
+            const TITLES = { color: 'Text Color', font: 'Font', spacing: 'Line Spacing', size: 'Text Size' }
+
+            const confirmOption = opt => {
+              const view = cmRef.current
+              if (!view || !opt) return
+              const marker = `{${type}:${opt.value}}`
+              view.dispatch({
+                changes: { from: lineFrom, to: lineTo, insert: marker },
+                selection: { anchor: lineFrom + marker.length },
+              })
+              setInlineCmd(null)
+              view.focus()
+            }
+
+            return (
+              <div style={{
+                position: 'fixed',
+                left: Math.min(coords.left, window.innerWidth - 380),
+                top: Math.min(coords.top, window.innerHeight - 380),
+                zIndex: 9999,
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: 12,
+                boxShadow: '0 16px 48px rgba(0,0,0,0.55)',
+                padding: 6,
+                minWidth: type === 'color' ? 280 : 240,
+                maxWidth: 380,
+                maxHeight: 360,
+                overflow: 'auto',
+              }}>
+                <div style={{ padding: '4px 10px 6px', fontSize: 11, color: 'var(--textDim)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', opacity: 0.7 }}>
+                  {TITLES[type]}
+                </div>
+                {type === 'color' ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4, padding: '0 4px 4px' }}>
+                    {filtered.map((opt, i) => (
+                      <button key={opt.name} title={opt.name}
+                        onMouseDown={e => { e.preventDefault(); confirmOption(opt) }}
+                        style={{
+                          width: 36, height: 36, borderRadius: 8,
+                          border: i === activeIdx ? '2px solid var(--accent)' : '2px solid transparent',
+                          background: opt.value.startsWith('var(') ? opt.value : opt.value === 'inherit' ? 'var(--surfaceAlt)' : opt.value,
+                          cursor: 'pointer', outline: 'none', position: 'relative',
+                        }}>
+                        {opt.value === 'inherit' && (
+                          <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: 'var(--text)', fontWeight: 700 }}>∅</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+                    {filtered.map((opt, i) => (
+                      <li key={opt.name}
+                        onMouseDown={e => { e.preventDefault(); confirmOption(opt) }}
+                        style={{
+                          padding: '8px 12px', borderRadius: 8, margin: '1px 0',
+                          display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
+                          background: i === activeIdx ? 'rgba(56,139,253,0.18)' : 'transparent',
+                          color: i === activeIdx ? 'var(--accent)' : 'var(--text)',
+                        }}>
+                        {type === 'font' && (
+                          <>
+                            <span style={{ flex: 1, fontSize: 14, fontFamily: opt.value, fontWeight: 500 }}>{opt.name}</span>
+                            <span style={{ fontSize: 11, opacity: 0.5, fontFamily: opt.value }}>Abc</span>
+                          </>
+                        )}
+                        {type === 'size' && (
+                          <>
+                            <span style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{opt.name}</span>
+                            <span style={{ fontSize: opt.value, opacity: 0.75, lineHeight: 1 }}>Aa</span>
+                          </>
+                        )}
+                        {(type === 'spacing') && (
+                          <>
+                            <span style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{opt.name}</span>
+                            <span style={{ fontSize: 12, opacity: 0.6, fontFamily: 'monospace' }}>{opt.preview}</span>
+                          </>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div style={{ padding: '5px 12px 6px', fontSize: 10.5, color: 'var(--textDim)', opacity: 0.65, borderTop: '1px solid var(--borderSubtle)', marginTop: 4, textAlign: 'center', letterSpacing: '0.01em' }}>
+                  ↑↓ navigate · Tab/Enter confirm · Esc dismiss
+                </div>
+              </div>
+            )
+          })()}
         </div>
       )}
 
@@ -8257,8 +8761,16 @@ export default function NotebookView() {
 }
 
 // ─── Notebook settings panel (Syntax + Backlinks tabs) ───────────────────────
+const SYNTAX_SUBTABS = [
+  { id: 'formatting', label: 'Formatting', sections: ['Inline Formatting', 'Headings', 'Auto-wrap Pairs'] },
+  { id: 'blocks',     label: 'Blocks',     sections: ['Blocks', 'Inline Math'] },
+  { id: 'links',      label: 'Links & Tags', sections: ['Wikilinks', 'Tags & Dates'] },
+  { id: 'shortcuts',  label: 'Shortcuts',  sections: ['Shortcuts'] },
+]
+
 function NotebookSettingsPanel({ notebook, notebooks, onClose }) {
   const [tab, setTab] = useState('syntax')
+  const [syntaxTab, setSyntaxTab] = useState('formatting')
   const [blView, setBlView] = useState('list') // 'list' | 'graph'
   const [backlinks, setBacklinks] = useState(null) // null = loading, [] = none
   const [forwardsLinks, setForwardsLinks] = useState(null) // null = loading, [] = none
@@ -8525,18 +9037,35 @@ function NotebookSettingsPanel({ notebook, notebooks, onClose }) {
         <div style={{ borderTop:'1px solid var(--border)', marginTop:0 }} />
 
         {tab === 'syntax' && (
-          <div style={{ overflow:'auto', padding:'14px 20px 20px' }}>
-            {SECS.map(sec => (
-              <div key={sec.title} style={{ marginBottom:18 }}>
-                <div style={{ fontSize:10, fontWeight:700, letterSpacing:'.08em', textTransform:'uppercase', color:'var(--textDim)', opacity:.6, marginBottom:8 }}>{sec.title}</div>
-                {sec.rows.map(({k,d}) => (
-                  <div key={k} style={{ display:'flex', alignItems:'baseline', gap:12, padding:'4px 0', borderBottom:'1px solid var(--borderSubtle)' }}>
-                    <code style={{ fontFamily:'SF Mono,Menlo,Consolas,monospace', fontSize:11, background:'var(--surfaceAlt)', border:'1px solid var(--border)', borderRadius:5, padding:'2px 8px', color:'var(--accent)', flexShrink:0, minWidth:130, display:'inline-block' }}>{k}</code>
-                    <span style={{ fontSize:12, color:'var(--textDim)' }}>{d}</span>
-                  </div>
-                ))}
-              </div>
-            ))}
+          <div style={{ display:'flex', flexDirection:'column', flex:1, overflow:'hidden' }}>
+            {/* Syntax subtabs */}
+            <div style={{ display:'flex', gap:2, padding:'10px 20px 0', borderBottom:'1px solid var(--borderSubtle)', flexShrink:0 }}>
+              {SYNTAX_SUBTABS.map(st => (
+                <button key={st.id} onClick={() => setSyntaxTab(st.id)} style={{
+                  padding:'5px 12px', fontSize:11, fontWeight:600, fontFamily:'inherit',
+                  borderRadius:'6px 6px 0 0', border:'1px solid',
+                  borderColor: st.id === syntaxTab ? 'var(--border)' : 'transparent',
+                  borderBottom: st.id === syntaxTab ? '1px solid var(--surface)' : '1px solid transparent',
+                  background: st.id === syntaxTab ? 'var(--surface)' : 'transparent',
+                  color: st.id === syntaxTab ? 'var(--text)' : 'var(--textDim)',
+                  cursor:'pointer', marginBottom: st.id === syntaxTab ? -1 : 0,
+                  transition:'background 0.1s, color 0.1s',
+                }}>{st.label}</button>
+              ))}
+            </div>
+            <div style={{ overflow:'auto', padding:'14px 20px 20px', flex:1 }}>
+              {SECS.filter(sec => (SYNTAX_SUBTABS.find(st => st.id === syntaxTab)?.sections || []).includes(sec.title)).map(sec => (
+                <div key={sec.title} style={{ marginBottom:18 }}>
+                  <div style={{ fontSize:10, fontWeight:700, letterSpacing:'.08em', textTransform:'uppercase', color:'var(--textDim)', opacity:.6, marginBottom:8 }}>{sec.title}</div>
+                  {sec.rows.map(({k,d}) => (
+                    <div key={k} style={{ display:'flex', alignItems:'baseline', gap:12, padding:'4px 0', borderBottom:'1px solid var(--borderSubtle)' }}>
+                      <code style={{ fontFamily:'SF Mono,Menlo,Consolas,monospace', fontSize:11, background:'var(--surfaceAlt)', border:'1px solid var(--border)', borderRadius:5, padding:'2px 8px', color:'var(--accent)', flexShrink:0, minWidth:130, display:'inline-block' }}>{k}</code>
+                      <span style={{ fontSize:12, color:'var(--textDim)' }}>{d}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

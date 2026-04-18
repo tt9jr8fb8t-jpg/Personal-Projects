@@ -28,20 +28,28 @@ const VIEW_LABELS = {
 }
 
 /** Derive a tab label from tab state — show file/content name when available.
- *  Pass `notebooks` from the store so notebook title changes reflect without remounting. */
-function getTabLabel(tab, { notebooks = [] } = {}) {
-  if (tab.activeBook && (tab.view === 'reader' || tab.view === 'pdf'))
-    return tab.activeBook.title || VIEW_LABELS[tab.view] || tab.view
+ *  Pass `notebooks` and `flashcardDecks` from the store so title changes reflect without remounting. */
+function getTabLabel(tab, { notebooks = [], flashcardDecks = [], sketchbooks = [], library = [] } = {}) {
+  if (tab.activeBook && (tab.view === 'reader' || tab.view === 'pdf')) {
+    const live = library.find(b => b.id === tab.activeBook.id)
+    return live?.title || tab.activeBook.title || VIEW_LABELS[tab.view] || tab.view
+  }
   if (tab.activeNotebook && tab.view === 'notebook') {
     const live = notebooks.find(n => n.id === tab.activeNotebook.id)
     return live?.title || tab.activeNotebook.title || 'Notebook'
   }
-  if (tab.activeAudioBook && tab.view === 'audio-player')
-    return tab.activeAudioBook.title || 'Listening'
-  if (tab.activeSketchbook && tab.view === 'sketchbook')
-    return tab.activeSketchbook.title || 'Sketchbook'
-  if (tab.activeFlashcardDeck && tab.view === 'flashcard')
-    return tab.activeFlashcardDeck.title || 'Flashcards'
+  if (tab.activeAudioBook && tab.view === 'audio-player') {
+    const live = library.find(b => b.id === tab.activeAudioBook.id)
+    return live?.title || tab.activeAudioBook.title || 'Listening'
+  }
+  if (tab.activeSketchbook && tab.view === 'sketchbook') {
+    const live = sketchbooks.find(s => s.id === tab.activeSketchbook.id)
+    return live?.title || tab.activeSketchbook.title || 'Sketchbook'
+  }
+  if (tab.activeFlashcardDeck && tab.view === 'flashcard') {
+    const live = flashcardDecks.find(d => d.id === tab.activeFlashcardDeck.id)
+    return live?.title || tab.activeFlashcardDeck.title || 'Flashcards'
+  }
   return VIEW_LABELS[tab.view] || tab.view
 }
 
@@ -107,10 +115,14 @@ function TabPane({ tabId, isActive, isLastActive, isSplit, onFocus }) {
 
 // ── Tab Layout Modal ──────────────────────────────────────────────────────────
 function TabLayoutModal({ onClose, splitDir, splitPanes, setSplitDir, setSplitPanes, switchTab }) {
-  const tabs        = useAppStore(s => s.tabs)
-  const activeTabId = useAppStore(s => s.activeTabId)
-  const closeTab    = useAppStore(s => s.closeTab)
-  const openNewTab  = useAppStore(s => s.openNewTab)
+  const tabs           = useAppStore(s => s.tabs)
+  const activeTabId    = useAppStore(s => s.activeTabId)
+  const closeTab       = useAppStore(s => s.closeTab)
+  const openNewTab     = useAppStore(s => s.openNewTab)
+  const notebooks      = useAppStore(s => s.notebooks)
+  const flashcardDecks = useAppStore(s => s.flashcardDecks)
+  const sketchbooks    = useAppStore(s => s.sketchbooks)
+  const library        = useAppStore(s => s.library)
 
   const isSplit = splitDir !== null
     && splitPanes.length === 2
@@ -164,7 +176,7 @@ function TabLayoutModal({ onClose, splitDir, splitPanes, setSplitDir, setSplitPa
               <div key={tab.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, background: tab.id === activeTabId ? 'rgba(56,139,253,0.1)' : 'transparent', marginBottom: 2 }}>
                 <div style={{ width: 6, height: 6, borderRadius: 3, background: tab.id === activeTabId ? 'var(--accent)' : 'var(--border)', flexShrink: 0 }} />
                 <span style={{ flex: 1, fontSize: 13, color: tab.id === activeTabId ? 'var(--accent)' : 'var(--text)', fontWeight: tab.id === activeTabId ? 600 : 400 }}>
-                  {VIEW_LABELS[tab.view] || tab.view}
+                  {getTabLabel(tab, { notebooks, flashcardDecks, sketchbooks, library })}
                   {tab.id === activeTabId && <span style={{ fontSize: 10, color: 'var(--textDim)', marginLeft: 6 }}>active</span>}
                 </span>
                 {tab.id !== activeTabId && (
@@ -460,7 +472,8 @@ function GnosLoadingScreen({ onDone }) {
       {update && (
         <div style={{
           position: 'relative', zIndex: 2, marginTop: 8,
-          background: 'rgba(0,0,0,0.08)', border: `1px solid ${p.accent}40`,
+          background: p.bg, border: `1px solid ${p.accent}60`,
+          boxShadow: `0 4px 24px rgba(0,0,0,0.18)`,
           borderRadius: 12, padding: '14px 18px', width: 280,
           display: 'flex', flexDirection: 'column', gap: 10,
         }}>
@@ -533,8 +546,11 @@ export default function App() {
   const onboardingComplete    = useAppStore(s => s.onboardingComplete)
   const setOnboardingComplete = useAppStore(s => s.setOnboardingComplete)
 
-  const reorderTabs   = useAppStore(s => s.reorderTabs)
-  const notebooks     = useAppStore(s => s.notebooks)
+  const reorderTabs     = useAppStore(s => s.reorderTabs)
+  const notebooks       = useAppStore(s => s.notebooks)
+  const flashcardDecks  = useAppStore(s => s.flashcardDecks)
+  const sketchbooks     = useAppStore(s => s.sketchbooks)
+  const library         = useAppStore(s => s.library)
   const tabHistories  = useAppStore(s => s.tabHistories)
   const goBack        = useAppStore(s => s.goBack)
   const goForward     = useAppStore(s => s.goForward)
@@ -786,6 +802,21 @@ export default function App() {
         {/* Left drag area covers the traffic-light / padding gap */}
         <div ref={leftDragRef} style={{ position: 'absolute', left: 0, top: 0, width: 88, height: '100%', cursor: 'default' }} />
 
+        {/* Tab layout manager button — left of nav arrows for better UX on Windows/Linux */}
+        <div className="gnos-titlebar-settings" style={{ marginRight: 3 }}>
+          <button
+            className="gnos-settings-btn"
+            title="Tab layout"
+            onClick={() => setTabSettingsOpen(true)}
+            style={{ border: '1px solid var(--border)', borderRadius: 5 }}
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+              <rect x="5" y="5" width="9" height="9" rx="2" stroke="currentColor" strokeWidth="1.3" fill="none" opacity="0.45"/>
+              <rect x="2" y="2" width="9" height="9" rx="2" stroke="currentColor" strokeWidth="1.3" fill="var(--surface)"/>
+            </svg>
+          </button>
+        </div>
+
         {/* Back / Forward navigation arrows — per-tab history */}
         {(() => {
           const hist = tabHistories[activeTabId] || { back: [], forward: [] }
@@ -813,7 +844,7 @@ export default function App() {
 
         {tabs.map((tab, tabIdx) => {
           const isActive = tab.id === activeTabId
-          const label = getTabLabel(tab, { notebooks })
+          const label = getTabLabel(tab, { notebooks, flashcardDecks, sketchbooks, library })
           return (
             <div
               key={tab.id}
@@ -855,24 +886,8 @@ export default function App() {
           </svg>
         </button>
 
-        {/* Draggable empty space — fills gap between tabs and settings button */}
+        {/* Draggable empty space — fills gap between tabs and right edge */}
         <div ref={midDragRef} style={{ flex: 1, height: '100%', minWidth: 20 }} />
-
-        {/* Layout settings button — right side on macOS, handled via CSS on Windows */}
-        <div className="gnos-titlebar-settings">
-          <button
-            className="gnos-settings-btn"
-            title="Tab layout"
-            onClick={() => setTabSettingsOpen(true)}
-            style={{ border: '1px solid var(--border)', borderRadius: 5 }}
-          >
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-              {/* Safari-style tab overview icon: overlapping rounded rects */}
-              <rect x="5" y="5" width="9" height="9" rx="2" stroke="currentColor" strokeWidth="1.3" fill="none" opacity="0.45"/>
-              <rect x="2" y="2" width="9" height="9" rx="2" stroke="currentColor" strokeWidth="1.3" fill="var(--surface)"/>
-            </svg>
-          </button>
-        </div>
       </div>
 
       {/* ── Content ────────────────────────────────────────────────────────── */}

@@ -5,7 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import JSZip from 'jszip'
-import storage, { saveBookContent, saveAudiobookMeta } from '@/lib/storage'
+import storage, { saveBookContent, saveAudiobookMeta, writeAudioFile } from '@/lib/storage'
 import { readFileAsDataURL } from '@/lib/utils'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -589,23 +589,24 @@ export async function importAudioFile(file) {
   if (!/\.(mp3|m4b|m4a|wav|ogg|flac|aac|opus)$/i.test(file.name) && !file.type.startsWith('audio/')) {
     throw new Error('Not a supported audio format')
   }
+  const ext   = file.name.split('.').pop().toLowerCase()
   const id    = makeBookId('audio')
   const title = file.name
     .replace(/\.(mp3|m4b|m4a|wav|ogg|flac|aac|opus)$/i, '')
     .replace(/[_-]/g, ' ')
     .trim()
 
-  // Store raw file (binary) so playback uses a blob URL
-  const blobUrl = await readFileAsDataURL(file)
-  await storage.set(`audiodata_${id}`, blobUrl)
-
   const book = {
     id, title, author: '', type: 'audio', format: 'audio',
-    audioDataUrl: blobUrl, hasAudio: true,  // blobUrl is now a dataURL
+    audioExt: ext, hasAudio: true,
     totalChapters: 1, currentChapter: 0, currentPage: 0,
     addedAt: new Date().toISOString(),
     coverDataUrl: null,
   }
+
+  // Write raw audio bytes directly to disk — no base64 overhead
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  await writeAudioFile(book, `audio.${ext}`, bytes)
   await saveAudiobookMeta(book)
   return book
 }
@@ -623,31 +624,34 @@ export async function importAudioFolder(files) {
     ? audioFiles[0].webkitRelativePath.split('/')[0]
     : audioFiles[0].name.replace(/\.(mp3|m4b|m4a|wav|ogg|flac|aac|opus)$/i, '')
 
-  const id       = makeBookId('audio')
-  const chapters = []
+  const id = makeBookId('audio')
 
-  for (let i = 0; i < audioFiles.length; i++) {
-    const file         = audioFiles[i]
-    const url          = await readFileAsDataURL(file)
-    const chapterTitle = file.name
-      .replace(/\.(mp3|m4b|m4a|wav|ogg|flac|aac|opus)$/i, '')
-      .replace(/[_-]/g, ' ')
-      .trim()
-    chapters.push({ title: chapterTitle, index: i, dataUrl: url })
-    await storage.set(`audiochap_${id}_${i}`, url)
-  }
-
-  await storage.set(`audiochaps_${id}`, JSON.stringify(chapters))
-
+  // Build book object first so writeAudioFile can resolve the folder path
   const book = {
     id,
     title: folderName, author: '', type: 'audio', format: 'audiofolder',
-    audioChapters: chapters,
+    audioChapters: [],
     hasAudio: true, totalChapters: audioFiles.length,
     currentChapter: 0, currentPage: 0,
     addedAt: new Date().toISOString(),
     coverDataUrl: null,
   }
+
+  const chapters = []
+  for (let i = 0; i < audioFiles.length; i++) {
+    const file  = audioFiles[i]
+    const ext   = file.name.split('.').pop().toLowerCase()
+    const chapterTitle = file.name
+      .replace(/\.(mp3|m4b|m4a|wav|ogg|flac|aac|opus)$/i, '')
+      .replace(/[_-]/g, ' ')
+      .trim()
+    // Write raw bytes directly — no base64 overhead
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    await writeAudioFile(book, `chapter_${i}.${ext}`, bytes)
+    chapters.push({ title: chapterTitle, index: i, ext })
+  }
+
+  book.audioChapters = chapters
   await saveAudiobookMeta(book)
   return book
 }

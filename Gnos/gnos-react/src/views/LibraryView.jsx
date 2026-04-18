@@ -421,6 +421,17 @@ function EditAudiobookModal({ book, onSave, onClose }) {
   const [author, setAuthor] = useState(book.author || '')
   const COLORS = ['#2d1b69','#0d5eaf','#1a6b3a','#7a1f6e','#b91c1c','#1565c0','#6b3fa0','#0f4c75']
   const [color,  setColor]  = useState(book.coverColor || COLORS[0])
+  const [coverDataUrl, setCoverDataUrl] = useState(book.coverDataUrl || null)
+  const coverInputRef = useRef(null)
+
+  function handleCoverFile(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => setCoverDataUrl(ev.target.result)
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center' }}
@@ -441,6 +452,27 @@ function EditAudiobookModal({ book, onSave, onClose }) {
             style={{ width:'100%', background:'var(--bg)', border:'1px solid var(--border)', color:'var(--text)',
               borderRadius:7, padding:'7px 10px', fontSize:13, outline:'none', boxSizing:'border-box' }} />
         </div>
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontSize:11, color:'var(--textDim)', marginBottom:8, fontWeight:600, textTransform:'uppercase', letterSpacing:'0.06em' }}>Cover Image</div>
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+            {coverDataUrl && (
+              <img src={coverDataUrl} alt="Cover" style={{ width:36, height:50, objectFit:'cover', borderRadius:4, border:'1px solid var(--border)', flexShrink:0 }} />
+            )}
+            <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+              <button onClick={() => coverInputRef.current?.click()}
+                style={{ background:'var(--surfaceAlt)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:7, padding:'5px 12px', fontSize:12, cursor:'pointer', fontFamily:'inherit' }}>
+                {coverDataUrl ? 'Change Image' : 'Upload Image'}
+              </button>
+              {coverDataUrl && (
+                <button onClick={() => setCoverDataUrl(null)}
+                  style={{ background:'none', border:'1px solid var(--border)', color:'var(--textDim)', borderRadius:7, padding:'5px 12px', fontSize:12, cursor:'pointer', fontFamily:'inherit' }}>
+                  Remove Image
+                </button>
+              )}
+            </div>
+          </div>
+          <input ref={coverInputRef} type="file" accept="image/*" style={{ display:'none' }} onChange={handleCoverFile} />
+        </div>
         <div style={{ marginBottom:20 }}>
           <div style={{ fontSize:11, color:'var(--textDim)', marginBottom:8, fontWeight:600, textTransform:'uppercase', letterSpacing:'0.06em' }}>Cover Color</div>
           <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
@@ -455,7 +487,7 @@ function EditAudiobookModal({ book, onSave, onClose }) {
         <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
           <button onClick={onClose} style={{ background:'none', border:'1px solid var(--border)', color:'var(--textMuted)',
             borderRadius:7, padding:'7px 16px', fontSize:13, cursor:'pointer' }}>Cancel</button>
-          <button onClick={() => onSave({ title: title.trim() || book.title, author: author.trim(), coverColor: color })}
+          <button onClick={() => onSave({ title: title.trim() || book.title, author: author.trim(), coverColor: color, coverDataUrl: coverDataUrl ?? null })}
             style={{ background:'var(--accent)', border:'none', color:'#fff',
               borderRadius:7, padding:'7px 16px', fontSize:13, cursor:'pointer', fontWeight:600 }}>Save</button>
         </div>
@@ -557,8 +589,8 @@ function SearchDropdown({ query, library, notebooks, sketchbooks, onOpenBook, on
     const todayStr = now.toDateString()
     const nbItem = (n, sub) => (
       <button key={n.id} className="search-drop-item" onClick={() => { onOpenNotebook(n); onClose() }}>
-        <div className="search-drop-cover" style={{ background: n.coverColor || '#2d1b69' }}>
-          <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.5)', fontWeight: 600 }}>NOTE</span>
+        <div className="search-drop-cover" style={{ background: n.coverColor || '#2d1b69', boxShadow: '0 1px 6px rgba(0,0,0,0.4)' }}>
+          {n.coverDataUrl && <img src={n.coverDataUrl} alt="" style={{ width:'100%',height:'100%',objectFit:'cover',borderRadius:4 }} />}
         </div>
         <div className="search-drop-info">
           <div className="search-drop-title">{n.title}</div>
@@ -650,11 +682,17 @@ function SearchDropdown({ query, library, notebooks, sketchbooks, onOpenBook, on
             else onOpenBook(item)
             onClose()
           }}>
-            <div className="search-drop-cover" style={{ background: isSb ? (item.coverColor || `linear-gradient(135deg,${c1},${c2})`) : `linear-gradient(135deg,${c1},${c2})` }}>
+            {/* Cover — solid color for notebooks/sketchbooks, gradient for books/audio, matching sidenav MiniCover */}
+            <div className="search-drop-cover" style={{
+              background: (isNb || isSb)
+                ? (item.coverColor || (isNb ? '#2d1b69' : '#0d5eaf'))
+                : `linear-gradient(135deg,${c1},${c2})`,
+              boxShadow: '0 1px 6px rgba(0,0,0,0.4)',
+            }}>
               {item.coverDataUrl
                 ? <img src={item.coverDataUrl} alt="" style={{ width:'100%',height:'100%',objectFit:'cover',borderRadius:4 }} />
-                : <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.5)', fontWeight: 600 }}>
-                    {isAudio ? 'AUDIO' : isNb ? 'NOTE' : isSb ? 'SKETCH' : 'BOOK'}
+                : <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.45)', fontWeight: 700 }}>
+                    {isAudio ? '♪' : ''}
                   </span>
               }
             </div>
@@ -664,7 +702,17 @@ function SearchDropdown({ query, library, notebooks, sketchbooks, onOpenBook, on
               {isNb && <div className="search-drop-sub">{item.wordCount || 0} words</div>}
               {ocrSnippet && <div className="search-drop-sub" style={{ fontStyle:'italic', opacity:0.75 }}>{ocrSnippet}</div>}
             </div>
-            <div className="search-drop-badge">{isAudio ? '♪' : isNb ? '📝' : isSb ? '✏️' : '📖'}</div>
+            <div className="search-drop-badge">
+              {isAudio ? (
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M3 6h3l3.5-4.5v13L6 10H3V6z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/><path d="M11 5c.8.7 1.3 1.6 1.3 3s-.5 2.3-1.3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
+              ) : isNb ? (
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="12" height="14" rx="1.5" stroke="currentColor" strokeWidth="1.4"/><line x1="5" y1="5" x2="11" y2="5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/><line x1="5" y1="8" x2="11" y2="8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg>
+              ) : isSb ? (
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2 14l4-4 7-7a1.5 1.5 0 0 1 2 2L8 12 2 14z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/></svg>
+              ) : (
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M3 14V3a1.5 1.5 0 0 1 1.5-1.5h9V14H4.5A1.5 1.5 0 0 1 3 12.5v0A1.5 1.5 0 0 1 4.5 11H13.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              )}
+            </div>
           </button>
         )
       })}
@@ -708,32 +756,43 @@ function NotebookCard({ nb, onOpen, onMenu }) {
       onContextMenu={e => { e.preventDefault(); onMenu(e, nb) }}>
       {/* Cover — same fixed size as book covers */}
       <div className="book-cover" style={{ background: color, padding: 0, justifyContent: 'flex-start', alignItems: 'stretch' }}>
-        {/* Left spine shadow */}
-        <div style={{ position:'absolute', left:0, top:0, bottom:0, width:8,
-          background:'rgba(0,0,0,0.18)', zIndex:1 }} />
+        {nb.coverDataUrl ? (
+          <>
+            <div style={{ position:'absolute', inset:0, borderRadius:'inherit', overflow:'hidden' }}>
+              <img src={nb.coverDataUrl} alt="" draggable="false" style={{ width:'100%', height:'100%', objectFit:'cover' }} />
+            </div>
+            <div style={{ position:'absolute', inset:0, borderRadius:'inherit', border:'1px solid var(--border)', pointerEvents:'none', zIndex:2 }} />
+          </>
+        ) : (
+          <>
+            {/* Left spine shadow */}
+            <div style={{ position:'absolute', left:0, top:0, bottom:0, width:8,
+              background:'rgba(0,0,0,0.18)', zIndex:1 }} />
 
-        {/* Title + date — top section */}
-        <div style={{ position:'relative', padding:'14px 12px 0 16px', flex:1, zIndex:2 }}>
-          <div style={{ fontSize:13, fontWeight:800, color:'#fff', lineHeight:1.25, wordBreak:'break-word', overflow:'hidden', display:'-webkit-box', WebkitLineClamp:4, WebkitBoxOrient:'vertical' }}>{nb.title}</div>
-          {dateStr && <div style={{ fontSize:10, color:'rgba(255,255,255,0.6)', marginTop:7, fontWeight:400 }}>{dateStr}</div>}
-        </div>
+            {/* Title + date — top section */}
+            <div style={{ position:'relative', padding:'14px 12px 0 16px', flex:1, zIndex:2 }}>
+              <div style={{ fontSize:13, fontWeight:800, color:'#fff', lineHeight:1.25, wordBreak:'break-word', overflow:'hidden', display:'-webkit-box', WebkitLineClamp:4, WebkitBoxOrient:'vertical' }}>{nb.title}</div>
+              {dateStr && <div style={{ fontSize:10, color:'rgba(255,255,255,0.6)', marginTop:7, fontWeight:400 }}>{dateStr}</div>}
+            </div>
 
-        {/* Bottom area — due date badge replaces ruled lines when present */}
-        <div style={{ position:'relative', padding:'0 12px 16px 16px', display:'flex', flexDirection:'column', gap:8, zIndex:2 }}>
-          {dueBadge ? (
-            <div style={{
-              fontSize:9, fontWeight:700, letterSpacing:'.04em',
-              padding:'2px 7px 3px', borderRadius:5, display:'inline-flex', alignSelf:'flex-start',
-              background: dueBadge.state === 'overdue' ? 'rgba(220,40,40,0.22)' : dueBadge.state === 'today' ? 'rgba(230,120,0,0.22)' : 'rgba(70,100,255,0.20)',
-              color: dueBadge.state === 'overdue' ? '#ffd0d0' : dueBadge.state === 'today' ? '#ffe8b0' : '#dce8ff',
-              border: `1px solid ${dueBadge.state === 'overdue' ? 'rgba(220,40,40,0.45)' : dueBadge.state === 'today' ? 'rgba(230,120,0,0.45)' : 'rgba(70,100,255,0.40)'}`,
-            }}>{dueBadge.text}</div>
-          ) : (
-            [...Array(2)].map((_,i) => (
-              <div key={i} style={{ height:1, background:'rgba(255,255,255,0.32)', borderRadius:1 }} />
-            ))
-          )}
-        </div>
+            {/* Bottom area — due date badge replaces ruled lines when present */}
+            <div style={{ position:'relative', padding:'0 12px 16px 16px', display:'flex', flexDirection:'column', gap:8, zIndex:2 }}>
+              {dueBadge ? (
+                <div style={{
+                  fontSize:9, fontWeight:700, letterSpacing:'.04em',
+                  padding:'2px 7px 3px', borderRadius:5, display:'inline-flex', alignSelf:'flex-start',
+                  background: dueBadge.state === 'overdue' ? 'rgba(220,40,40,0.22)' : dueBadge.state === 'today' ? 'rgba(230,120,0,0.22)' : 'rgba(70,100,255,0.20)',
+                  color: dueBadge.state === 'overdue' ? '#ffd0d0' : dueBadge.state === 'today' ? '#ffe8b0' : '#dce8ff',
+                  border: `1px solid ${dueBadge.state === 'overdue' ? 'rgba(220,40,40,0.45)' : dueBadge.state === 'today' ? 'rgba(230,120,0,0.45)' : 'rgba(70,100,255,0.40)'}`,
+                }}>{dueBadge.text}</div>
+              ) : (
+                [...Array(2)].map((_,i) => (
+                  <div key={i} style={{ height:1, background:'rgba(255,255,255,0.32)', borderRadius:1 }} />
+                ))
+              )}
+            </div>
+          </>
+        )}
       </div>
       {/* Meta */}
       <div className="book-meta">
@@ -948,6 +1007,18 @@ function EditNotebookModal({ nb, onSave, onClose }) {
   const [title, setTitle] = useState(nb.title || '')
   const COLORS = ['#2d1b69','#0d5eaf','#1a6b3a','#7a1f6e','#b91c1c','#1565c0','#6b3fa0','#2e7d32','#c0392b','#00838f']
   const [color, setColor] = useState(nb.coverColor || COLORS[0])
+  const [coverDataUrl, setCoverDataUrl] = useState(nb.coverDataUrl || null)
+  const coverInputRef = useRef(null)
+
+  function handleCoverFile(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => setCoverDataUrl(ev.target.result)
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }
+
   return (
     <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.6)',zIndex:10000,display:'flex',alignItems:'center',justifyContent:'center'}}
       onClick={onClose}>
@@ -958,6 +1029,27 @@ function EditNotebookModal({ nb, onSave, onClose }) {
           <div style={{fontSize:11,color:'var(--textDim)',marginBottom:4,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.06em'}}>Title</div>
           <input value={title} onChange={e=>setTitle(e.target.value)}
             style={{width:'100%',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',borderRadius:7,padding:'7px 10px',fontSize:13,outline:'none',boxSizing:'border-box'}} />
+        </div>
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:11,color:'var(--textDim)',marginBottom:8,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.06em'}}>Cover Image</div>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            {coverDataUrl && (
+              <img src={coverDataUrl} alt="Cover" style={{width:36,height:50,objectFit:'cover',borderRadius:4,border:'1px solid var(--border)',flexShrink:0}} />
+            )}
+            <div style={{display:'flex',flexDirection:'column',gap:6}}>
+              <button onClick={() => coverInputRef.current?.click()}
+                style={{background:'var(--surfaceAlt)',border:'1px solid var(--border)',color:'var(--text)',borderRadius:7,padding:'5px 12px',fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>
+                {coverDataUrl ? 'Change Image' : 'Upload Image'}
+              </button>
+              {coverDataUrl && (
+                <button onClick={() => setCoverDataUrl(null)}
+                  style={{background:'none',border:'1px solid var(--border)',color:'var(--textDim)',borderRadius:7,padding:'5px 12px',fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>
+                  Remove Image
+                </button>
+              )}
+            </div>
+          </div>
+          <input ref={coverInputRef} type="file" accept="image/*" style={{display:'none'}} onChange={handleCoverFile} />
         </div>
         <div style={{marginBottom:20}}>
           <div style={{fontSize:11,color:'var(--textDim)',marginBottom:8,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.06em'}}>Cover Color</div>
@@ -973,7 +1065,7 @@ function EditNotebookModal({ nb, onSave, onClose }) {
         </div>
         <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
           <button onClick={onClose} style={{background:'none',border:'1px solid var(--border)',color:'var(--textDim)',borderRadius:7,padding:'7px 16px',fontSize:13,cursor:'pointer'}}>Cancel</button>
-          <button onClick={()=>onSave({title:title.trim()||nb.title,coverColor:color})}
+          <button onClick={()=>onSave({title:title.trim()||nb.title,coverColor:color,coverDataUrl:coverDataUrl??null})}
             style={{background:'var(--accent)',border:'none',color:'#fff',borderRadius:7,padding:'7px 16px',fontSize:13,cursor:'pointer',fontWeight:600}}>Save</button>
         </div>
       </div>
@@ -3382,20 +3474,21 @@ export default function LibraryView() {
           max-height: 360px; overflow-y: auto;
         }
         .search-drop-item {
-          display: flex; align-items: center; gap: 10px;
-          width: 100%; padding: 9px 12px; border: none; background: none;
-          color: var(--text); cursor: pointer; text-align: left;
-          transition: background 0.12s;
+          display: flex; align-items: center; gap: 11px;
+          width: 100%; padding: 8px 14px 8px 14px; border: none; background: none;
+          color: var(--textDim); cursor: pointer; text-align: left;
+          font-size: 13px; font-weight: 500;
+          transition: background 0.1s, color 0.1s;
         }
-        .search-drop-item:hover { background: var(--hover); }
+        .search-drop-item:hover { background: var(--hover); color: var(--text); }
         .search-drop-cover {
-          width: 36px; height: 50px; border-radius: 4px; flex-shrink: 0;
+          width: 30px; height: 42px; border-radius: 4px; flex-shrink: 0;
           display: flex; align-items: center; justify-content: center; overflow: hidden;
         }
         .search-drop-info { flex: 1; min-width: 0; }
-        .search-drop-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .search-drop-title { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .search-drop-sub { font-size: 11px; color: var(--textDim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .search-drop-badge { font-size: 14px; flex-shrink: 0; opacity: 0.6; }
+        .search-drop-badge { font-size: 13px; flex-shrink: 0; opacity: 0.5; }
       `}</style>
       {/* Hidden inputs */}
       <input ref={fileInputRef}  type="file" accept=".epub,.epub3,.txt,.md,.pdf,application/epub+zip" className="hidden-input" multiple onChange={handleBookFiles} />

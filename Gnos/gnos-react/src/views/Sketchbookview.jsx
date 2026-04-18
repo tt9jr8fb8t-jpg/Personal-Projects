@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState, useCallback, useContext } from 'react'
 import useAppStore from '@/store/useAppStore'
 import { PaneContext } from '@/lib/PaneContext'
+import { useIsActiveTab } from '@/lib/useIsActiveTab'
 import { loadSketchbookContent, saveSketchbookContent } from '@/lib/storage'
 import { GnosNavButton } from '@/components/SideNav'
 
@@ -294,6 +295,7 @@ async function generateSketchbookThumbnail(api, files) {
 // ─────────────────────────────────────────────────────────────────────────────
 export default function SketchbookView() {
   const paneTabId           = useContext(PaneContext)
+  const isActive            = useIsActiveTab()
   const sketchbook          = useAppStore(useCallback(
     s => {
       const tab = paneTabId ? s.tabs.find(t => t.id === paneTabId) : null
@@ -318,8 +320,6 @@ export default function SketchbookView() {
   const [pdfProgress,  setPdfProgress]  = useState('')
   const [bgLocked,     setBgLocked]     = useState(false)
   const pdfInputRef = useRef(null)
-  // OCR indexing state
-  const [ocrStatus, setOcrStatus] = useState('idle') // 'idle' | 'indexing' | 'done' | 'error'
 
   const excalidrawApiRef  = useRef(null)
   const saveTimerRef      = useRef(null)
@@ -328,6 +328,7 @@ export default function SketchbookView() {
   const lastSavedSigRef   = useRef(null) // dirty-flag: skip saves when only viewport changed
   const latestSaveArgsRef = useRef(null) // latest onChange args — flushed synchronously on unmount
   const thumbnailTimerRef = useRef(null) // debounces thumbnail regeneration after saves
+  const ocrTimerRef       = useRef(null) // debounces auto-OCR indexing after saves
   // Always holds the last non-null sketchbook so the unmount cleanup can save
   // even after `sketchbook` has become null in the selector (tab closed).
   const stableSketchbookRef = useRef(sketchbook)
@@ -464,6 +465,34 @@ export default function SketchbookView() {
       useAppStore.getState().updateSketchbook?.(sbId, { coverDataUrl: thumb.dataUrl, coverBgColor: thumb.bgColor })
       useAppStore.getState().persistSketchbooks?.()
     }, 2000)
+
+    // Auto-index text 45s after the last save (debounced), non-blocking background OCR
+    clearTimeout(ocrTimerRef.current)
+    if (elements?.length) {
+      ocrTimerRef.current = setTimeout(async () => {
+        const api = excalidrawApiRef.current
+        if (!api) return
+        const els = api.getSceneElements()
+        if (!els?.length) return
+        try {
+          const { utils } = await loadExcalidraw()
+          const blob = await utils.exportToBlob({
+            elements: els,
+            appState: { ...api.getAppState(), exportBackground: true },
+            files: savedFilesRef.current,
+            mimeType: 'image/png',
+            quality: 1,
+          })
+          const { createWorker } = await import('tesseract.js')
+          const worker = await createWorker('eng')
+          const { data: { text } } = await worker.recognize(blob)
+          await worker.terminate()
+          const ocrText = text.trim()
+          useAppStore.getState().updateSketchbook?.(sbId, { ocrText, ocrIndexedAt: new Date().toISOString() })
+          await useAppStore.getState().persistSketchbooks?.()
+        } catch { /* silent — OCR failure should never surface to the user */ }
+      }, 45000)
+    }
   }, [sketchbook, updateSketchbook])
 
   const scheduleSave = useCallback((elements, appState, files) => {
@@ -498,6 +527,7 @@ export default function SketchbookView() {
   useEffect(() => {
     return () => {
       clearTimeout(saveTimerRef.current)
+      clearTimeout(ocrTimerRef.current)
       const args = latestSaveArgsRef.current
       if (!args) return
       const sig = args.elements?.length
@@ -604,43 +634,6 @@ export default function SketchbookView() {
     scheduleSave(updated, appState, api.getFiles())
   }, [scheduleSave])
 
-  // ── OCR indexing ──────────────────────────────────────────────────────────────
-  // Exports the current canvas to a PNG and runs Tesseract to extract text.
-  // The result is stored as `ocrText` on the sketchbook meta so LibraryView
-  // search can find it.
-  const runSketchbookOcr = useCallback(async () => {
-    const api = excalidrawApiRef.current
-    if (!api || !sketchbook) return
-    const elements = api.getSceneElements()
-    if (!elements?.length) return
-
-    setOcrStatus('indexing')
-    try {
-      const { utils } = await loadExcalidraw()
-      const blob = await utils.exportToBlob({
-        elements,
-        appState: { ...api.getAppState(), exportBackground: true },
-        files: savedFilesRef.current,
-        mimeType: 'image/png',
-        quality: 1,
-      })
-
-      const { createWorker } = await import('tesseract.js')
-      const worker = await createWorker('eng')
-      const { data: { text } } = await worker.recognize(blob)
-      await worker.terminate()
-
-      const ocrText = text.trim()
-      updateSketchbook(sketchbook.id, { ocrText, ocrIndexedAt: new Date().toISOString() })
-      await useAppStore.getState().persistSketchbooks?.()
-      setOcrStatus('done')
-      setTimeout(() => setOcrStatus('idle'), 2200)
-    } catch (err) {
-      console.error('[SketchbookView] OCR failed:', err)
-      setOcrStatus('error')
-      setTimeout(() => setOcrStatus('idle'), 2500)
-    }
-  }, [sketchbook, updateSketchbook])
 
   // Keep a ref to the latest doSave so the unmount effect can call the current version
   const doSaveRef = useRef(doSave)
@@ -745,6 +738,12 @@ export default function SketchbookView() {
       }}>
         <GnosNavButton />
         <div style={{ width:1, height:18, background:'var(--border)', flexShrink:0 }} />
+        {/* Shapes counter — left side next to nav button */}
+        {sketchbook.elementCount > 0 && (
+          <div style={{ fontSize:11, color:'var(--textDim)', background:'var(--surfaceAlt)', border:'1px solid var(--border)', borderRadius:4, padding:'2px 7px', fontVariantNumeric:'tabular-nums', flexShrink:0 }}>
+            {sketchbook.elementCount} {sketchbook.elementCount === 1 ? 'shape' : 'shapes'}
+          </div>
+        )}
 
         {/* Title — absolutely centered to the full header width */}
         <div style={{ position:'absolute', left:0, right:0, display:'flex', justifyContent:'center', alignItems:'center', pointerEvents:'none', zIndex:1 }}>
@@ -803,7 +802,7 @@ export default function SketchbookView() {
         </div>
 
         {/* Right-side actions */}
-        <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'flex-end', gap:8 }}>
+        <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'flex-end', gap:6 }}>
           {/* Save status */}
           <div className="nb-save-indicator">
             <svg id="sk-save-icon" className="nb-save-icon" viewBox="0 0 18 18" fill="none">
@@ -812,115 +811,55 @@ export default function SketchbookView() {
             </svg>
           </div>
 
-          {sketchbook.elementCount > 0 && (
-            <div style={{ fontSize:10, color:'var(--textDim)', background:'var(--surfaceAlt)', border:'1px solid var(--border)', borderRadius:4, padding:'2px 6px', fontVariantNumeric:'tabular-nums' }}>
-              {sketchbook.elementCount} {sketchbook.elementCount === 1 ? 'shape' : 'shapes'}
-            </div>
-          )}
-
-          {/* Lock Background button — locks all image elements as a background layer */}
+          {/* Lock Background button — icon only */}
           {isLoaded && ExcalidrawCmp && (
             <button
               onClick={bgLocked ? unlockBackground : lockBackground}
               title={bgLocked ? 'Unlock background images (make editable)' : 'Lock background images (protect from eraser)'}
               style={{
-                display:'flex', alignItems:'center', gap:5,
+                display:'flex', alignItems:'center', justifyContent:'center',
+                width:28, height:28,
                 background: bgLocked ? 'rgba(56,139,253,0.12)' : 'var(--surfaceAlt)',
                 border: bgLocked ? '1px solid var(--accent)' : '1px solid var(--border)',
-                borderRadius:7, padding:'0 10px', height:28, cursor:'pointer',
-                fontSize:12, fontFamily:'inherit',
-                color: bgLocked ? 'var(--accent)' : 'var(--text)',
+                borderRadius:6, cursor:'pointer',
+                color: bgLocked ? 'var(--accent)' : 'var(--textDim)',
                 transition:'background 0.1s, border-color 0.1s, color 0.1s',
               }}
-              onMouseEnter={e=>{if(!bgLocked){e.currentTarget.style.borderColor='var(--accent)'}}}
-              onMouseLeave={e=>{if(!bgLocked){e.currentTarget.style.borderColor='var(--border)'}}}
+              onMouseEnter={e=>{if(!bgLocked){e.currentTarget.style.borderColor='var(--accent)';e.currentTarget.style.color='var(--text)'}}}
+              onMouseLeave={e=>{if(!bgLocked){e.currentTarget.style.borderColor='var(--border)';e.currentTarget.style.color='var(--textDim)'}}}
             >
               {bgLocked
-                ? <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="3" y="7" width="10" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.4"/><path d="M5 7V5a3 3 0 0 1 6 0v2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
-                : <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="3" y="7" width="10" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.4"/><path d="M5 7V5a3 3 0 0 1 6 0" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
+                ? <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="3" y="7" width="10" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.4"/><path d="M5 7V5a3 3 0 0 1 6 0v2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
+                : <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="3" y="7" width="10" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.4"/><path d="M5 7V5a3 3 0 0 1 6 0" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
               }
-              {bgLocked ? 'BG Locked' : 'Lock BG'}
             </button>
           )}
 
-          {/* PDF Import button */}
+          {/* PDF Import button — icon only */}
           <button
             onClick={openPdfPicker}
             disabled={pdfImporting || !isLoaded || !ExcalidrawCmp}
             title="Import PDF into canvas"
             style={{
-              display:'flex', alignItems:'center', gap:5,
+              display:'flex', alignItems:'center', justifyContent:'center',
+              width:28, height:28,
               background:'var(--surfaceAlt)', border:'1px solid var(--border)',
-              borderRadius:7, padding:'0 10px', height:28, cursor:'pointer',
-              fontSize:12, fontFamily:'inherit', color:'var(--text)',
-              transition:'background 0.1s, border-color 0.1s',
+              borderRadius:6, cursor:'pointer', color:'var(--textDim)',
+              transition:'background 0.1s, border-color 0.1s, color 0.1s',
               opacity: (pdfImporting || !isLoaded) ? 0.5 : 1,
             }}
-            onMouseEnter={e=>{ if (!pdfImporting) { e.currentTarget.style.background='var(--hover,rgba(255,255,255,0.06))'; e.currentTarget.style.borderColor='var(--accent)' }}}
-            onMouseLeave={e=>{ e.currentTarget.style.background='var(--surfaceAlt)'; e.currentTarget.style.borderColor='var(--border)' }}
+            onMouseEnter={e=>{ if (!pdfImporting && isLoaded) { e.currentTarget.style.borderColor='var(--accent)'; e.currentTarget.style.color='var(--text)' }}}
+            onMouseLeave={e=>{ e.currentTarget.style.borderColor='var(--border)'; e.currentTarget.style.color='var(--textDim)' }}
           >
-            {/* PDF icon */}
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
               <rect x="2" y="1" width="9" height="12" rx="1.5" stroke="currentColor" strokeWidth="1.4"/>
               <path d="M8 1v4h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
               <path d="M5 7h4M5 9.5h2.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-              <circle cx="12.5" cy="12.5" r="2.5" fill="var(--accent)" stroke="none"/>
-              <path d="M12.5 11.5v2M11.5 12.5h2" stroke="#fff" strokeWidth="1.2" strokeLinecap="round"/>
+              <path d="M12.5 11v3M11 12.5h3" stroke="var(--accent)" strokeWidth="1.6" strokeLinecap="round"/>
             </svg>
-            Import PDF
           </button>
 
-          {/* OCR Index button */}
-          {isLoaded && ExcalidrawCmp && (
-            <button
-              onClick={runSketchbookOcr}
-              disabled={ocrStatus === 'indexing'}
-              title={
-                ocrStatus === 'done'  ? 'Text indexed — searchable in Library' :
-                ocrStatus === 'error' ? 'OCR failed — try again' :
-                'Index written text so this sketchbook appears in Library search'
-              }
-              style={{
-                display:'flex', alignItems:'center', gap:5,
-                background: ocrStatus === 'done'  ? 'rgba(56,139,253,0.12)' :
-                            ocrStatus === 'error' ? 'rgba(248,81,73,0.10)'  : 'var(--surfaceAlt)',
-                border: ocrStatus === 'done'  ? '1px solid var(--accent)'       :
-                        ocrStatus === 'error' ? '1px solid rgba(248,81,73,0.5)' : '1px solid var(--border)',
-                borderRadius:7, padding:'0 10px', height:28, cursor: ocrStatus === 'indexing' ? 'default' : 'pointer',
-                fontSize:12, fontFamily:'inherit',
-                color: ocrStatus === 'done'  ? 'var(--accent)'  :
-                       ocrStatus === 'error' ? '#f85149'        : 'var(--text)',
-                transition:'background 0.1s, border-color 0.1s, color 0.1s',
-                opacity: ocrStatus === 'indexing' ? 0.7 : 1,
-              }}
-              onMouseEnter={e=>{ if (ocrStatus === 'idle') { e.currentTarget.style.borderColor='var(--accent)'; e.currentTarget.style.background='var(--hover,rgba(255,255,255,0.06))' }}}
-              onMouseLeave={e=>{ if (ocrStatus === 'idle') { e.currentTarget.style.borderColor='var(--border)'; e.currentTarget.style.background='var(--surfaceAlt)' }}}
-            >
-              {ocrStatus === 'indexing' ? (
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ animation:'spin 0.8s linear infinite' }}>
-                  <circle cx="8" cy="8" r="6" stroke="var(--border)" strokeWidth="2"/>
-                  <path d="M8 2a6 6 0 0 1 6 6" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round"/>
-                </svg>
-              ) : ocrStatus === 'done' ? (
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-                  <polyline points="3,8 6.5,12 13,4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-              ) : ocrStatus === 'error' ? (
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-                  <path d="M8 3v6M8 11.5v1.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-                </svg>
-              ) : (
-                <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-                  <circle cx="6.5" cy="6.5" r="4" stroke="currentColor" strokeWidth="1.4"/>
-                  <line x1="9.8" y1="9.8" x2="14" y2="14" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
-                  <path d="M4.5 6.5h4M6.5 4.5v4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-                </svg>
-              )}
-              {ocrStatus === 'indexing' ? 'Indexing…' :
-               ocrStatus === 'done'     ? 'Indexed'   :
-               ocrStatus === 'error'    ? 'OCR Error' : 'Index Text'}
-            </button>
-          )}
+
 
         </div>
       </header>
@@ -1016,6 +955,7 @@ export default function SketchbookView() {
               theme={excalidrawTheme}
               excalidrawAPI={api => { excalidrawApiRef.current = api }}
               onChange={(elements, appState, files) => scheduleSave(elements, appState, files)}
+              onKeyDown={!isActive ? (e) => { e.stopPropagation(); return true } : undefined}
               UIOptions={{
                 canvasActions: {
                   changeViewBackgroundColor: true,

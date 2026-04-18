@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import useAppStore from '@/store/useAppStore'
+import { useIsActiveTab } from '@/lib/useIsActiveTab'
 import { loadAudioChapter, loadSingleAudioData, addReadingMinutes } from '@/lib/storage'
 import { generateCoverColor } from '@/lib/utils'
 import { GnosNavButton } from '@/components/SideNav'
@@ -18,6 +19,7 @@ const fmt = (s) => {
 
 export default function AudioPlayerView() {
   const book    = useAppStore(s => s.activeAudioBook)
+  const isActive = useIsActiveTab()
 
   const audioRef    = useRef(getGlobalAudio())
   const chapCacheRef = useRef({})
@@ -44,6 +46,12 @@ export default function AudioPlayerView() {
   // ── Load chapter ───────────────────────────────────────────────────────────
   useEffect(() => {
     if (!book) return
+    // Revoke any Blob URLs created for the previous book to free memory
+    for (const src of Object.values(chapCacheRef.current)) {
+      if (typeof src === 'string' && src.startsWith('blob:')) {
+        try { URL.revokeObjectURL(src) } catch { /* ignore */ }
+      }
+    }
     chapCacheRef.current = {}
     const startIdx = book.currentChapter || 0
     setChapIdx(startIdx)
@@ -77,9 +85,9 @@ export default function AudioPlayerView() {
           src = book.audioChapters[idx].dataUrl
           cache[idx] = src
         }
-        // Try to upgrade to the persisted version
+        // Try to upgrade to the persisted version (binary file or legacy data URL)
         try {
-          const stored = await loadAudioChapter(book.id, idx)
+          const stored = await loadAudioChapter(book, idx)
           if (stored) {
             const raw = stored.value ?? stored
             let storedSrc = ''
@@ -107,9 +115,9 @@ export default function AudioPlayerView() {
           src = book.audioDataUrl
           cache[0] = src
         }
-        // Try to upgrade from storage
+        // Try to upgrade from storage (binary file or legacy data URL)
         try {
-          const stored = await loadSingleAudioData(book.id)
+          const stored = await loadSingleAudioData(book)
           if (stored) {
             const raw = stored.value ?? stored
             let storedSrc = ''
@@ -145,7 +153,7 @@ export default function AudioPlayerView() {
       setTimeout(async () => {
         if (!cache[idx + 1]) {
           try {
-            const s = await loadAudioChapter(book.id, idx + 1)
+            const s = await loadAudioChapter(book, idx + 1)
             if (s) {
               const val = s.value ?? s
               cache[idx + 1] = val instanceof Blob ? URL.createObjectURL(val) : val
@@ -303,10 +311,9 @@ export default function AudioPlayerView() {
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
   useEffect(() => {
-    const handler = (e) => {
-      // Only fire when the audio player is the active view
-      if (useAppStore.getState().view !== 'audio-player') return
+    if (!isActive) return
 
+    const handler = (e) => {
       // Don't steal keys from any text input or contenteditable (e.g. CodeMirror)
       const el = document.activeElement
       const tag = el?.tagName
@@ -328,7 +335,7 @@ export default function AudioPlayerView() {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // togglePlay and skipBy close over refs — intentionally stable
+  }, [isActive]) // isActive + togglePlay/skipBy close over refs — intentionally stable
 
   // ── Listening timer — credits minutes while audio is playing ───────────────
   useEffect(() => {

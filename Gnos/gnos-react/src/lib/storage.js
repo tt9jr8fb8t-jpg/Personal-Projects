@@ -946,14 +946,13 @@ export async function addReadingMinutes(minutes) {
 //
 // Folder layout:
 //   archive/audio/<Artist - Title>/
-//     meta.json        — book metadata (title, author, format, chapters list, …)
-//     chapter_<n>.bin  — raw audio bytes for multi-chapter audiobooks (future)
+//     meta.json            — book metadata (title, author, format, chapters list, …)
+//     audio.<ext>          — raw audio bytes for single-file audiobooks
+//     chapter_<n>.<ext>    — raw audio bytes for multi-chapter audiobooks
 //
-// Audio binary data is currently stored as base64 data-URL strings under the
-// flat keys audiodata_<id> / audiochap_<id>_<n> because writing binary files
-// requires Tauri's writeBinaryFile API which is gated on separate permissions.
-// The meta.json folder is written on every save so the library is browsable
-// on-disk even though the audio payload itself stays in the keyed store.
+// Audio binary data is stored as raw files using Tauri's writeFile/readFile APIs.
+// Legacy base64 data-URL strings under audiodata_<id> / audiochap_<id>_<n> are
+// still read as a backwards-compatibility fallback.
 
 async function getAudioDir() {
   const base = await getBaseDir()
@@ -1017,8 +1016,39 @@ export async function deleteAudiobookMeta(book) {
   } catch (err) { console.debug('[Gnos] deleteAudiobookMeta error', err) }
 }
 
-export async function loadAudioChapter(bookId, chapterIdx) {
-  return storage.get(`audiochap_${bookId}_${chapterIdx}`)
+function _extToMime(ext) {
+  const map = { mp3: 'audio/mpeg', m4b: 'audio/mp4', m4a: 'audio/mp4', wav: 'audio/wav', ogg: 'audio/ogg', flac: 'audio/flac', aac: 'audio/aac', opus: 'audio/ogg; codecs=opus' }
+  return map[ext?.toLowerCase()] || 'audio/mpeg'
+}
+
+export async function writeAudioFile(book, fileName, uint8Array) {
+  const dir = await getAudioBookDir(book)
+  await writeFile(await join(dir, fileName), uint8Array)
+}
+
+export async function readAudioFile(book, fileName) {
+  try {
+    const dir = await getAudioBookDir(book)
+    const filePath = await join(dir, fileName)
+    if (!(await exists(filePath))) return null
+    return await readFile(filePath)
+  } catch { return null }
+}
+
+export async function loadAudioChapter(bookOrId, chapterIdx) {
+  // New binary path: pass the full book object with audioChapters[n].ext set
+  if (bookOrId && typeof bookOrId === 'object') {
+    const book = bookOrId
+    const ext = book.audioChapters?.[chapterIdx]?.ext
+    if (ext) {
+      const bytes = await readAudioFile(book, `chapter_${chapterIdx}.${ext}`)
+      if (bytes) return new Blob([bytes], { type: _extToMime(ext) })
+    }
+    // Fall back to legacy keyed-store format
+    return storage.get(`audiochap_${book.id}_${chapterIdx}`)
+  }
+  // Legacy: bookOrId is a string ID
+  return storage.get(`audiochap_${bookOrId}_${chapterIdx}`)
 }
 
 export async function saveAudioChapter(bookId, chapterIdx, dataUrl) {
@@ -1039,8 +1069,17 @@ export async function deleteAudiobook(book) {
   }
 }
 
-export async function loadSingleAudioData(bookId) {
-  return storage.get(`audiodata_${bookId}`)
+export async function loadSingleAudioData(bookOrId) {
+  if (bookOrId && typeof bookOrId === 'object') {
+    const book = bookOrId
+    const ext = book.audioExt
+    if (ext) {
+      const bytes = await readAudioFile(book, `audio.${ext}`)
+      if (bytes) return new Blob([bytes], { type: _extToMime(ext) })
+    }
+    return storage.get(`audiodata_${book.id}`)
+  }
+  return storage.get(`audiodata_${bookOrId}`)
 }
 
 // Migration: write meta.json folders for any audiobooks that don't have one yet.

@@ -85,6 +85,34 @@ const VIEW_LABELS = {
   notebook: 'Notebook',
   pdf: 'PDF',
   sketchbook: 'Sketchbook',
+  flashcard: 'Flashcards',
+  graph: 'Graph',
+  calendar: 'Calendar',
+  kanban: 'Tasks',
+}
+
+function getTabLabel(tab, { notebooks = [], flashcardDecks = [], sketchbooks = [], library = [] } = {}) {
+  if (tab.activeBook && (tab.view === 'reader' || tab.view === 'pdf')) {
+    const live = library.find(b => b.id === tab.activeBook.id)
+    return live?.title || tab.activeBook.title || VIEW_LABELS[tab.view] || tab.view
+  }
+  if (tab.activeNotebook && tab.view === 'notebook') {
+    const live = notebooks.find(n => n.id === tab.activeNotebook.id)
+    return live?.title || tab.activeNotebook.title || 'Notebook'
+  }
+  if (tab.activeAudioBook && tab.view === 'audio-player') {
+    const live = library.find(b => b.id === tab.activeAudioBook.id)
+    return live?.title || tab.activeAudioBook.title || 'Listening'
+  }
+  if (tab.activeSketchbook && tab.view === 'sketchbook') {
+    const live = sketchbooks.find(s => s.id === tab.activeSketchbook.id)
+    return live?.title || tab.activeSketchbook.title || 'Sketchbook'
+  }
+  if (tab.activeFlashcardDeck && tab.view === 'flashcard') {
+    const live = flashcardDecks.find(d => d.id === tab.activeFlashcardDeck.id)
+    return live?.title || tab.activeFlashcardDeck.title || 'Flashcards'
+  }
+  return VIEW_LABELS[tab.view] || tab.view
 }
 
 // 10% narrower than original 264
@@ -681,7 +709,10 @@ export function UniversalSettingsModal({ onClose }) {
                 borderRadius: 8, marginBottom: 6, textDecoration: 'none', color: 'var(--text)',
                 transition: 'border-color 0.15s',
               }}>
-                <span style={{ fontSize: 18 }}>📚</span>
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" style={{ flexShrink:0 }}>
+                  <rect x="3" y="2" width="5" height="16" rx="1" stroke="currentColor" strokeWidth="1.4"/>
+                  <rect x="10" y="2" width="5" height="16" rx="1" stroke="currentColor" strokeWidth="1.4"/>
+                </svg>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>Project Gutenberg</div>
                   <div style={{ fontSize: 11, color: 'var(--textDim)' }}>Free public domain ebooks — 70,000+ titles</div>
@@ -694,7 +725,10 @@ export function UniversalSettingsModal({ onClose }) {
                 borderRadius: 8, marginBottom: 6, textDecoration: 'none', color: 'var(--text)',
                 transition: 'border-color 0.15s',
               }}>
-                <span style={{ fontSize: 18 }}>🎧</span>
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" style={{ flexShrink:0 }}>
+                  <path d="M4 8h3l3.5-4.5v13L7 12H4V8z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+                  <path d="M13 6.5c1 .9 1.6 2.1 1.6 3.5s-.6 2.6-1.6 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+                </svg>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>LibriVox</div>
                   <div style={{ fontSize: 11, color: 'var(--textDim)' }}>Free public domain audiobooks — 20,000+ titles</div>
@@ -1084,7 +1118,18 @@ function SideEditModal({ item, isNb, isSb, isAudio, colors, onClose, onSave }) {
   const [title, setTitle] = useState(item.title || '')
   const [author, setAuthor] = useState(item.author || '')
   const [color, setColor] = useState(item.coverColor || colors[0])
+  const [coverDataUrl, setCoverDataUrl] = useState(item.coverDataUrl || null)
+  const coverInputRef = useRef(null)
   const heading = isNb ? 'Edit Notebook' : isSb ? 'Edit Sketchbook' : isAudio ? 'Edit Audiobook' : 'Edit Book'
+
+  function handleCoverFile(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => setCoverDataUrl(ev.target.result)
+    reader.readAsDataURL(file)
+  }
+
   return createPortal(
     <div style={{ position:'fixed',inset:0,background:'rgba(0,0,0,0.6)',zIndex:11000,display:'flex',alignItems:'center',justifyContent:'center' }}
       onClick={onClose}>
@@ -1103,22 +1148,46 @@ function SideEditModal({ item, isNb, isSb, isAudio, colors, onClose, onSave }) {
               style={{ width:'100%',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',borderRadius:7,padding:'7px 10px',fontSize:13,outline:'none',boxSizing:'border-box' }} />
           </div>
         )}
-        <div style={{ marginBottom:20 }}>
-          <div style={{ fontSize:11,color:'var(--textDim)',marginBottom:8,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.06em' }}>Cover Color</div>
-          <div style={{ display:'flex',gap:8,flexWrap:'wrap' }}>
-            {colors.map(c => (
-              <button key={c} onClick={() => setColor(c)} style={{
-                width:28,height:28,borderRadius:6,background:c,
-                border: c === color ? '2px solid var(--accent)' : '2px solid transparent',
-                cursor:'pointer',outline: c === color ? '2px solid var(--accent)' : 'none',outlineOffset:1
-              }} />
-            ))}
+        {/* Cover image upload */}
+        <div style={{ marginBottom:12 }}>
+          <div style={{ fontSize:11,color:'var(--textDim)',marginBottom:8,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.06em' }}>Cover Image</div>
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+            {coverDataUrl && (
+              <img src={coverDataUrl} alt="Cover" style={{ width:36,height:50,objectFit:'cover',borderRadius:4,border:'1px solid var(--border)',flexShrink:0 }} />
+            )}
+            <div style={{ display:'flex',flexDirection:'column',gap:6 }}>
+              <button
+                onClick={() => coverInputRef.current?.click()}
+                style={{ background:'var(--surfaceAlt)',border:'1px solid var(--border)',color:'var(--text)',borderRadius:7,padding:'5px 12px',fontSize:12,cursor:'pointer',fontFamily:'inherit' }}
+              >{coverDataUrl ? 'Change Image' : 'Upload Image'}</button>
+              {coverDataUrl && (
+                <button
+                  onClick={() => setCoverDataUrl(null)}
+                  style={{ background:'none',border:'1px solid var(--border)',color:'var(--textDim)',borderRadius:7,padding:'5px 12px',fontSize:12,cursor:'pointer',fontFamily:'inherit' }}
+                >Remove Image</button>
+              )}
+            </div>
           </div>
+          <input ref={coverInputRef} type="file" accept="image/*" style={{ display:'none' }} onChange={handleCoverFile} />
         </div>
+        {(isNb || isSb) && (
+          <div style={{ marginBottom:20 }}>
+            <div style={{ fontSize:11,color:'var(--textDim)',marginBottom:8,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.06em' }}>Cover Color</div>
+            <div style={{ display:'flex',gap:8,flexWrap:'wrap' }}>
+              {colors.map(c => (
+                <button key={c} onClick={() => setColor(c)} style={{
+                  width:28,height:28,borderRadius:6,background:c,
+                  border: c === color ? '2px solid var(--accent)' : '2px solid transparent',
+                  cursor:'pointer',outline: c === color ? '2px solid var(--accent)' : 'none',outlineOffset:1
+                }} />
+              ))}
+            </div>
+          </div>
+        )}
         <div style={{ display:'flex',gap:8,justifyContent:'flex-end' }}>
           <button onClick={onClose} style={{ background:'none',border:'1px solid var(--border)',color:'var(--textDim)',borderRadius:7,padding:'7px 16px',fontSize:13,cursor:'pointer' }}>Cancel</button>
           <button onClick={() => {
-            const changes = { title: title.trim() || item.title, coverColor: color }
+            const changes = { title: title.trim() || item.title, coverColor: color, coverDataUrl: coverDataUrl ?? null }
             if (isAudio || (!isNb && !isSb)) changes.author = author.trim()
             onSave(changes)
           }}
@@ -1152,6 +1221,7 @@ export default function SideNav({ isSplitPane = false }) {
   const activeLibTab        = useAppStore(s => s.activeLibTab)
   const library             = useAppStore(s => s.library)
   const notebooks           = useAppStore(s => s.notebooks)
+  const flashcardDecks      = useAppStore(s => s.flashcardDecks)
   const sketchbooks         = useAppStore(s => s.sketchbooks)
   const collections         = useAppStore(s => s.collections)
   const setActiveNotebook   = useAppStore(s => s.setActiveNotebook)
@@ -1882,7 +1952,7 @@ export default function SideNav({ isSplitPane = false }) {
                 onClick={() => handleTabSwitch(tab.id)}
               >
                 <div className="sidenav-tab-indicator" />
-                <span className="sidenav-tab-name">{VIEW_LABELS[tab.view] || tab.view}</span>
+                <span className="sidenav-tab-name">{getTabLabel(tab, { notebooks, flashcardDecks, sketchbooks, library })}</span>
                 <div className="sidenav-tab-close" role="button" tabIndex={-1} onClick={e => handleTabClose(e, tab.id)} title="Close tab">
                   <svg width="8" height="8" viewBox="0 0 10 10" fill="none">
                     <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
